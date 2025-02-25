@@ -5,8 +5,8 @@
 workspace "tm-virtual-machine"
 
     -- Language and Standard
-    language "C"
-    cdialect "C17"
+    language "C++"
+    cppdialect "C++20"
 
     -- Build File Location
     location "./generated"
@@ -24,7 +24,6 @@ workspace "tm-virtual-machine"
         optimize "On"
     filter { "system:linux" }
         defines { "TM_LINUX" }
-        cdialect "gnu17"
     filter {}
 
     -- "tm" - TM Virtual Machine
@@ -43,7 +42,7 @@ workspace "tm-virtual-machine"
             "./projects/tm/include"
         }
         files {
-            "./projects/tm/src/TM.*.c"
+            "./projects/tm/src/TM.*.cpp"
         }
 
     -- "tmm" - TM Virtual Machine Assembler
@@ -63,7 +62,7 @@ workspace "tm-virtual-machine"
             "./projects/tmm/include"
         }
         files {
-            "./projects/tmm/src/TMM.*.c"
+            "./projects/tmm/src/TMM.*.cpp"
         }
 
         -- Library Dependencies
