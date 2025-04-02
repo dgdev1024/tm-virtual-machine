@@ -5,8 +5,8 @@
 workspace "tm-virtual-machine"
 
     -- Language and Standard
-    language "C++"
-    cppdialect "C++20"
+    language "C"
+    cppdialect "c17"
 
     -- Build File Location
     location "./generated"
@@ -42,7 +42,7 @@ workspace "tm-virtual-machine"
             "./projects/tm/include"
         }
         files {
-            "./projects/tm/src/TM.*.cpp"
+            "./projects/tm/src/**.c"
         }
 
     -- "tmm" - TM Virtual Machine Assembler
@@ -62,7 +62,7 @@ workspace "tm-virtual-machine"
             "./projects/tmm/include"
         }
         files {
-            "./projects/tmm/src/TMM.*.cpp"
+            "./projects/tmm/src/**.c"
         }
 
         -- Library Dependencies
