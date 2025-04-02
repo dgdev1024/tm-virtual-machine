@@ -6,7 +6,7 @@ workspace "tm-virtual-machine"
 
     -- Language and Standard
     language "C"
-    cppdialect "c17"
+    cdialect "C17"
 
     -- Build File Location
     location "./generated"

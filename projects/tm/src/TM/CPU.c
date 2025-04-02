@@ -70,9 +70,10 @@ typedef struct TM_CPU
 // Private Function Prototypes /////////////////////////////////////////////////////////////////////
 
 static void TM_AdvanceCPU (TM_CPU* p_CPU, uint32_t p_Cycles);
-static bool TM_IsReadable (const TM_CPU* p_CPU, uint32_t p_Address, size_t p_Size);
-static bool TM_IsWritable (const TM_CPU* p_CPU, uint32_t p_Address, size_t p_Size);
-static bool TM_IsExecutable (const TM_CPU* p_CPU, uint32_t p_Address);
+static bool TM_CheckCondition (TM_CPU* p_CPU, TM_CPUCondition p_Condition);
+static bool TM_IsReadable (uint32_t p_Address, size_t p_Size);
+static bool TM_IsWritable (uint32_t p_Address, size_t p_Size);
+static bool TM_IsExecutable (uint32_t p_Address);
 static uint32_t TM_PopData (TM_CPU* p_CPU);
 static uint32_t TM_PopAddress (TM_CPU* p_CPU);
 static void TM_PushData (TM_CPU* p_CPU, uint32_t p_Value);
@@ -92,12 +93,37 @@ void TM_AdvanceCPU (TM_CPU* p_CPU, uint32_t p_Cycles)
     p_CPU->m_PC += p_Cycles;
 }
 
-// Private Functions - Memory Bounds Checking //////////////////////////////////////////////////////
-
-bool TM_IsReadable (const TM_CPU* p_CPU, uint32_t p_Address, size_t p_Size)
+bool TM_CheckCondition (TM_CPU* p_CPU, TM_CPUCondition p_Condition)
 {
     assert(p_CPU != NULL);
 
+    // Check the condition against the CPU's flags register.
+    switch (p_Condition)
+    {
+        case TM_COND_NONE:
+            return true;
+
+        case TM_COND_Z:
+            return (p_CPU->m_Flags.m_Z == 1);
+
+        case TM_COND_NZ:
+            return (p_CPU->m_Flags.m_Z == 0);
+
+        case TM_COND_C:
+            return (p_CPU->m_Flags.m_C == 1);
+
+        case TM_COND_NC:
+            return (p_CPU->m_Flags.m_C == 0);
+    }
+
+    // If the condition is not recognized, return false.
+    return false;
+}
+
+// Private Functions - Memory Bounds Checking //////////////////////////////////////////////////////
+
+bool TM_IsReadable (uint32_t p_Address, size_t p_Size)
+{
     // The readable bounds of the TM CPU's memory map are listed as follows:
     // - `0x00000000` to `0x00000FFF` - Program Metadata
     // - `0x40000000` to `0x7FFFFFFF` - Program Data
@@ -111,10 +137,8 @@ bool TM_IsReadable (const TM_CPU* p_CPU, uint32_t p_Address, size_t p_Size)
     );
 }
 
-bool TM_IsWritable (const TM_CPU* p_CPU, uint32_t p_Address, size_t p_Size)
+bool TM_IsWritable (uint32_t p_Address, size_t p_Size)
 {
-    assert(p_CPU != NULL);
-
     // The writable bounds of the TM CPU's memory map are listed as follows:
     // - `0x40000000` to `0x7FFFFFFF` - DRAM and XRAM
     // - `0x80000000` to `0xFFFCFFFF` - QRAM and I/O Ports
@@ -124,10 +148,8 @@ bool TM_IsWritable (const TM_CPU* p_CPU, uint32_t p_Address, size_t p_Size)
     );
 }
 
-bool TM_IsExecutable (const TM_CPU* p_CPU, uint32_t p_Address)
+bool TM_IsExecutable (uint32_t p_Address)
 {
-    assert(p_CPU != NULL);
-
     // The executable bounds of the TM CPU's memory map are listed as follows:
     // - `0x00001000` to `0x00002FFF` - Restart Vectors and Interrupt Handlers
     // - `0x00003000` to `0x3FFFFFFF` - Program Code
@@ -262,6 +284,2163 @@ void TM_ServiceInterrupt (TM_CPU* p_CPU)
             p_CPU->m_PC = TM_INT_BEGIN + (0x100 * i);
         }
     }
+}
+
+// Private Function Prototypes - Fetching Instruction Data /////////////////////////////////////////
+
+// Function Signature Syntax: `TM_Fetch_ARG1_ARG2`, where `ARG1` and/or `ARG2` can be any of the
+// following:
+// - `NULL`     = Nothing
+// - `REG`      = Register
+// - `IMM`      = Immediate Value
+// - `SIMM16`   = 16-bit Signed Immediate Value
+// - `ADDR32`   = 32-bit Absolute Address
+// - `ADDR16`   = 16-bit Relative Address (Relative to QRAM)
+// - `ADDR8`    = 8-bit Relative Address (Relative to Hardware I/O Ports)
+// - `REGPTR32` = 32-bit Absolute Address (Register Pointer)
+// - `REGPTR16` = 16-bit Relative Address (Register Pointer, Relative to QRAM)
+// - `REGPTR8`  = 8-bit Relative Address (Register Pointer, Relative to Hardware I/O Ports)
+
+static bool TM_Fetch_REG_REG (TM_CPU* p_CPU);
+static bool TM_Fetch_REG_IMM (TM_CPU* p_CPU);
+static bool TM_Fetch_REG_ADDR32 (TM_CPU* p_CPU);
+static bool TM_Fetch_REG_ADDR16 (TM_CPU* p_CPU);
+static bool TM_Fetch_REG_ADDR8 (TM_CPU* p_CPU);
+static bool TM_Fetch_REG_REGPTR32 (TM_CPU* p_CPU);
+static bool TM_Fetch_REG_REGPTR16 (TM_CPU* p_CPU);
+static bool TM_Fetch_REG_REGPTR8 (TM_CPU* p_CPU);
+static bool TM_Fetch_ADDR32_REG (TM_CPU* p_CPU);
+static bool TM_Fetch_ADDR16_REG (TM_CPU* p_CPU);
+static bool TM_Fetch_ADDR8_REG (TM_CPU* p_CPU);
+static bool TM_Fetch_REGPTR32_REG (TM_CPU* p_CPU);
+static bool TM_Fetch_REGPTR16_REG (TM_CPU* p_CPU);
+static bool TM_Fetch_REGPTR8_REG (TM_CPU* p_CPU);
+static bool TM_Fetch_NULL_IMM (TM_CPU* p_CPU);
+static bool TM_Fetch_NULL_SIMM16 (TM_CPU* p_CPU);
+static bool TM_Fetch_REG_NULL (TM_CPU* p_CPU);
+static bool TM_Fetch_REGPTR32_NULL (TM_CPU* p_CPU);
+
+// Private Functions - Fetching Instruction Data ///////////////////////////////////////////////////
+
+bool TM_Fetch_REG_REG (TM_CPU* p_CPU)
+{
+    // Argument 1: `REG` = Destination Register
+    // Argument 2: `REG` = Source Register
+
+    // Read the source register's value into the memory data register.
+    p_CPU->m_MD = TM_GetRegister(p_CPU, p_CPU->m_IP2);
+    return true;
+}
+
+bool TM_Fetch_REG_IMM (TM_CPU* p_CPU)
+{
+    // Argument 1: `REG` = Destination Register
+    // Argument 2: `IMM` = Immediate Value
+
+    // Depending on the low two bits of the destination register...
+    // - `0b00` = 32-bit register; read a double word at the program counter.
+    // - `0b01` = 16-bit register; read a word at the program counter.
+    // - Else   = 8-bit register; read a byte at the program counter.
+    //
+    // Place the data into the memory data register.
+    switch (p_CPU->m_IP1 & 0b11)
+    {
+        case 0b00:
+            // Read a double word from the bus at the program counter.
+            p_CPU->m_MD = TM_ReadDoubleWord(p_CPU, p_CPU->m_PC);
+            TM_AdvanceCPU(p_CPU, 4);
+            break;
+
+        case 0b01:
+            // Read a word from the bus at the program counter.
+            p_CPU->m_MD = TM_ReadWord(p_CPU, p_CPU->m_PC);
+            TM_AdvanceCPU(p_CPU, 2);
+            break;
+
+        default:
+            // Read a byte from the bus at the program counter.
+            p_CPU->m_MD = TM_ReadByte(p_CPU, p_CPU->m_PC);
+            TM_AdvanceCPU(p_CPU, 1);
+            break;
+    }
+
+    return (p_CPU->m_EC == TM_EC_OK);
+}
+
+bool TM_Fetch_REG_ADDR32 (TM_CPU* p_CPU)
+{
+    // Argument 1: `REG` = Destination Register
+    // Argument 2: `ADDR32` = Absolute Address
+
+    // Read the address from the bus at the program counter. Place it into the memory address
+    // register.
+    p_CPU->m_MA = TM_ReadDoubleWord(p_CPU, p_CPU->m_PC);
+    TM_AdvanceCPU(p_CPU, 4);
+
+    // Depending on the low two bits of the destination register...
+    // - `0b00` = 32-bit register; read a double word at the address in the memory address register.
+    // - `0b01` = 16-bit register; read a word at the address in the memory address register.
+    // - Else   = 8-bit register; read a byte at the address in the memory address register.
+    //
+    // Place the data into the memory data register.
+    switch (p_CPU->m_IP1 & 0b11)
+    {
+        case 0b00:
+            // Make sure the address is readable.
+            if (TM_IsReadable(p_CPU->m_MA, 4) == false)
+            {
+                p_CPU->m_EA = p_CPU->m_MA;
+                return TM_SetErrorCode(p_CPU, TM_EC_BAD_READ);
+            }
+
+            // Read a double word from the bus at the address in the memory address register.
+            p_CPU->m_MD = TM_ReadDoubleWord(p_CPU, p_CPU->m_MA);
+            TM_CycleCPU(p_CPU, 4);
+            break;
+
+        case 0b01:
+            // Make sure the address is readable.
+            if (TM_IsReadable(p_CPU->m_MA, 2) == false)
+            {
+                p_CPU->m_EA = p_CPU->m_MA;
+                return TM_SetErrorCode(p_CPU, TM_EC_BAD_READ);
+            }
+
+            // Read a word from the bus at the address in the memory address register.
+            p_CPU->m_MD = TM_ReadWord(p_CPU, p_CPU->m_MA);
+            TM_CycleCPU(p_CPU, 2);
+            break;
+
+        default:
+            // Make sure the address is readable.
+            if (TM_IsReadable(p_CPU->m_MA, 1) == false)
+            {
+                p_CPU->m_EA = p_CPU->m_MA;
+                return TM_SetErrorCode(p_CPU, TM_EC_BAD_READ);
+            }
+
+            // Read a byte from the bus at the address in the memory address register.
+            p_CPU->m_MD = TM_ReadByte(p_CPU, p_CPU->m_MA);
+            TM_CycleCPU(p_CPU, 1);
+            break;
+    }
+
+    return (p_CPU->m_EC == TM_EC_OK);
+}
+
+bool TM_Fetch_REG_ADDR16 (TM_CPU* p_CPU)
+{
+    // Argument 1: `REG` = Destination Register
+    // Argument 2: `ADDR16` = 16-bit Relative Address (Relative to QRAM)
+
+    // Read the address from the bus at the program counter. Place it into the memory address
+    // register. The address is relative to the QRAM, so add the QRAM base address to it.
+    p_CPU->m_MA = TM_ReadWord(p_CPU, p_CPU->m_PC) + TM_QRAM_BEGIN;
+    TM_AdvanceCPU(p_CPU, 2);
+
+    // Depending on the low two bits of the destination register...
+    // - `0b00` = 32-bit register; read a double word at the address in the memory address register.
+    // - `0b01` = 16-bit register; read a word at the address in the memory address register.
+    // - Else   = 8-bit register; read a byte at the address in the memory address register.
+    //
+    // Place the data into the memory data register. Because the absolute address is within the
+    // QRAM or I/O Ports, the address is always readable.
+    switch (p_CPU->m_IP1 & 0b11)
+    {
+        case 0b00:
+            // Read a double word from the bus at the address in the memory address register.
+            p_CPU->m_MD = TM_ReadDoubleWord(p_CPU, p_CPU->m_MA);
+            TM_CycleCPU(p_CPU, 4);
+            break;
+
+        case 0b01:
+            // Read a word from the bus at the address in the memory address register.
+            p_CPU->m_MD = TM_ReadWord(p_CPU, p_CPU->m_MA);
+            TM_CycleCPU(p_CPU, 2);
+            break;
+
+        default:
+            // Read a byte from the bus at the address in the memory address register.
+            p_CPU->m_MD = TM_ReadByte(p_CPU, p_CPU->m_MA);
+            TM_CycleCPU(p_CPU, 1);
+            break;
+    }
+
+    return (p_CPU->m_EC == TM_EC_OK);
+}
+
+bool TM_Fetch_REG_ADDR8 (TM_CPU* p_CPU)
+{
+    // Argument 1: `REG` = Destination Register
+    // Argument 2: `ADDR8` = 8-bit Relative Address (Relative to Hardware I/O Ports)
+
+    // Read the address from the bus at the program counter. Place it into the memory address
+    // register. The address is relative to the hardware I/O ports, so add the hardware I/O base
+    // address to it.
+    p_CPU->m_MA = TM_ReadByte(p_CPU, p_CPU->m_PC) + TM_IO_BEGIN;
+    TM_AdvanceCPU(p_CPU, 1);
+
+    // Depending on the low two bits of the destination register...
+    // - `0b00` = 32-bit register; read a double word at the address in the memory address register.
+    // - `0b01` = 16-bit register; read a word at the address in the memory address register.
+    // - Else   = 8-bit register; read a byte at the address in the memory address register.
+    //
+    // Place the data into the memory data register. Because the absolute address is within the
+    // I/O Ports' address range, the address is always readable.
+    switch (p_CPU->m_IP1 & 0b11)
+    {
+        case 0b00:
+            // Read a double word from the bus at the address in the memory address register.
+            p_CPU->m_MD = TM_ReadDoubleWord(p_CPU, p_CPU->m_MA);
+            TM_CycleCPU(p_CPU, 4);
+            break;
+
+        case 0b01:
+            // Read a word from the bus at the address in the memory address register.
+            p_CPU->m_MD = TM_ReadWord(p_CPU, p_CPU->m_MA);
+            TM_CycleCPU(p_CPU, 2);
+            break;
+
+        default:
+            // Read a byte from the bus at the address in the memory address register.
+            p_CPU->m_MD = TM_ReadByte(p_CPU, p_CPU->m_MA);
+            TM_CycleCPU(p_CPU, 1);
+            break;
+    }
+
+    return (p_CPU->m_EC == TM_EC_OK);
+}
+
+bool TM_Fetch_REG_REGPTR32 (TM_CPU* p_CPU)
+{
+    // Argument 1: `REG` = Destination Register
+    // Argument 2: `REGPTR32` = Absolute Address (Register Pointer)
+
+    // The register needs to contain a 32-bit address, so ensure that the destination register is
+    // a 32-bit register.
+    if ((p_CPU->m_IP1 & 0b11) != 0b00)
+    {
+        p_CPU->m_EA = p_CPU->m_IA;
+        return TM_SetErrorCode(p_CPU, TM_EC_INVALID_ARGUMENT);
+    }
+
+    // Get the address from the destination register. Place it into the memory address register.
+    p_CPU->m_MA = TM_GetRegister(p_CPU, p_CPU->m_IP1);
+
+    // Depending on the low two bits of the destination register...
+    // - `0b00` = 32-bit register; read a double word at the address in the memory address register.
+    // - `0b01` = 16-bit register; read a word at the address in the memory address register.
+    // - Else   = 8-bit register; read a byte at the address in the memory address register.
+    //
+    // Place the data into the memory data register.
+    switch (p_CPU->m_IP1 & 0b11)
+    {
+        case 0b00:
+            // Make sure the address is readable.
+            if (TM_IsReadable(p_CPU->m_MA, 4) == false)
+            {
+                p_CPU->m_EA = p_CPU->m_MA;
+                return TM_SetErrorCode(p_CPU, TM_EC_BAD_READ);
+            }
+
+            // Read a double word from the bus at the address in the memory address register.
+            p_CPU->m_MD = TM_ReadDoubleWord(p_CPU, p_CPU->m_MA);
+            TM_CycleCPU(p_CPU, 4);
+            break;
+
+        case 0b01:
+            // Make sure the address is readable.
+            if (TM_IsReadable(p_CPU->m_MA, 2) == false)
+            {
+                p_CPU->m_EA = p_CPU->m_MA;
+                return TM_SetErrorCode(p_CPU, TM_EC_BAD_READ);
+            }
+
+            // Read a word from the bus at the address in the memory address register.
+            p_CPU->m_MD = TM_ReadWord(p_CPU, p_CPU->m_MA);
+            TM_CycleCPU(p_CPU, 2);
+            break;
+
+        default:
+            // Make sure the address is readable.
+            if (TM_IsReadable(p_CPU->m_MA, 1) == false)
+            {
+                p_CPU->m_EA = p_CPU->m_MA;
+                return TM_SetErrorCode(p_CPU, TM_EC_BAD_READ);
+            }
+
+            // Read a byte from the bus at the address in the memory address register.
+            p_CPU->m_MD = TM_ReadByte(p_CPU, p_CPU->m_MA);
+            TM_CycleCPU(p_CPU, 1);
+            break;
+    }
+
+    return (p_CPU->m_EC == TM_EC_OK);
+}
+
+bool TM_Fetch_REG_REGPTR16 (TM_CPU* p_CPU)
+{
+    // Argument 1: `REG` = Destination Register
+    // Argument 2: `REGPTR16` = 16-bit Relative Address (Register Pointer, Relative to QRAM)
+
+    // The register needs to contain a 16-bit address, so ensure that the destination register is
+    // a 16-bit register.
+    if ((p_CPU->m_IP1 & 0b11) != 0b01)
+    {
+        p_CPU->m_EA = p_CPU->m_IA;
+        return TM_SetErrorCode(p_CPU, TM_EC_INVALID_ARGUMENT);
+    }
+
+    // Get the address from the destination register. Place it into the memory address register.
+    p_CPU->m_MA = TM_GetRegister(p_CPU, p_CPU->m_IP1) + TM_QRAM_BEGIN;
+
+    // Depending on the low two bits of the destination register...
+    // - `0b00` = 32-bit register; read a double word at the address in the memory address register.
+    // - `0b01` = 16-bit register; read a word at the address in the memory address register.
+    // - Else   = 8-bit register; read a byte at the address in the memory address register.
+    //
+    // Place the data into the memory data register. Because the absolute address is within the
+    // QRAM or I/O Ports, the address is always readable.
+    switch (p_CPU->m_IP1 & 0b11)
+    {
+        case 0b00:
+            // Read a double word from the bus at the address in the memory address register.
+            p_CPU->m_MD = TM_ReadDoubleWord(p_CPU, p_CPU->m_MA);
+            TM_CycleCPU(p_CPU, 4);
+            break;
+
+        case 0b01:
+            // Read a word from the bus at the address in the memory address register.
+            p_CPU->m_MD = TM_ReadWord(p_CPU, p_CPU->m_MA);
+            TM_CycleCPU(p_CPU, 2);
+            break;
+
+        default:
+            // Read a byte from the bus at the address in the memory address register.
+            p_CPU->m_MD = TM_ReadByte(p_CPU, p_CPU->m_MA);
+            TM_CycleCPU(p_CPU, 1);
+            break;
+    }
+
+    return (p_CPU->m_EC == TM_EC_OK);
+}
+
+bool TM_Fetch_REG_REGPTR8 (TM_CPU* p_CPU)
+{
+    // Argument 1: `REG` = Destination Register
+    // Argument 2: `REGPTR8` = 8-bit Relative Address (Register Pointer, Relative to Hardware I/O Ports)
+
+    // The register needs to contain an 8-bit address, so ensure that the destination register is
+    // an 8-bit register.
+    if ((p_CPU->m_IP1 & 0b11) < 0b10)
+    {
+        p_CPU->m_EA = p_CPU->m_IA;
+        return TM_SetErrorCode(p_CPU, TM_EC_INVALID_ARGUMENT);
+    }
+
+    // Get the address from the destination register. Place it into the memory address register.
+    p_CPU->m_MA = TM_GetRegister(p_CPU, p_CPU->m_IP1) + TM_IO_BEGIN;
+
+    // Depending on the low two bits of the destination register...
+    // - `0b00` = 32-bit register; read a double word at the address in the memory address register.
+    // - `0b01` = 16-bit register; read a word at the address in the memory address register.
+    // - Else   = 8-bit register; read a byte at the address in the memory address register.
+    //
+    // Place the data into the memory data register. Because the absolute address is within the
+    // I/O Ports' address range, the address is always readable.
+    switch (p_CPU->m_IP1 & 0b11)
+    {
+        case 0b00:
+            // Read a double word from the bus at the address in the memory address register.
+            p_CPU->m_MD = TM_ReadDoubleWord(p_CPU, p_CPU->m_MA);
+            TM_CycleCPU(p_CPU, 4);
+            break;
+
+        case 0b01:
+            // Read a word from the bus at the address in the memory address register.
+            p_CPU->m_MD = TM_ReadWord(p_CPU, p_CPU->m_MA);
+            TM_CycleCPU(p_CPU, 2);
+            break;
+
+        default:
+            // Read a byte from the bus at the address in the memory address register.
+            p_CPU->m_MD = TM_ReadByte(p_CPU, p_CPU->m_MA);
+            TM_CycleCPU(p_CPU, 1);
+            break;
+    }
+
+    return (p_CPU->m_EC == TM_EC_OK);
+}
+
+bool TM_Fetch_ADDR32_REG (TM_CPU* p_CPU)
+{
+    // Argument 1: `ADDR32` = Absolute Address
+    // Argument 2: `REG` = Source Register
+
+    // Read the address from the bus at the program counter. Place it into the memory address
+    // register.
+    p_CPU->m_MA = TM_ReadDoubleWord(p_CPU, p_CPU->m_PC);
+    TM_AdvanceCPU(p_CPU, 4);
+
+    // Depending on the low two bits of the source register, make sure the address range of the
+    // appropriate size is writable.
+    switch (p_CPU->m_IP2 & 0b11)
+    {
+        case 0b00:
+            // Make sure the address is writable.
+            if (TM_IsWritable(p_CPU->m_MA, 4) == false)
+            {
+                p_CPU->m_EA = p_CPU->m_MA;
+                return TM_SetErrorCode(p_CPU, TM_EC_BAD_WRITE);
+            }
+            break;
+        case 0b01:
+            // Make sure the address is writable.
+            if (TM_IsWritable(p_CPU->m_MA, 2) == false)
+            {
+                p_CPU->m_EA = p_CPU->m_MA;
+                return TM_SetErrorCode(p_CPU, TM_EC_BAD_WRITE);
+            }
+            break;
+        default:
+            // Make sure the address is writable.
+            if (TM_IsWritable(p_CPU->m_MA, 1) == false)
+            {
+                p_CPU->m_EA = p_CPU->m_MA;
+                return TM_SetErrorCode(p_CPU, TM_EC_BAD_WRITE);
+            }
+            break;
+    }
+
+    // Because the address is to be written to, set the destination address flag to true.
+    p_CPU->m_DA = true;
+
+    // Read the source register's value into the memory data register.
+    p_CPU->m_MD = TM_GetRegister(p_CPU, p_CPU->m_IP2);
+    return true;
+}
+
+bool TM_Fetch_ADDR16_REG (TM_CPU* p_CPU)
+{
+    // Argument 1: `ADDR16` = 16-bit Relative Address (Relative to QRAM)
+    // Argument 2: `REG` = Source Register
+
+    // Read the address from the bus at the program counter. Place it into the memory address
+    // register. The address is relative to the QRAM, so add the QRAM base address to it.
+    p_CPU->m_MA = TM_ReadWord(p_CPU, p_CPU->m_PC) + TM_QRAM_BEGIN;
+    TM_AdvanceCPU(p_CPU, 2);
+
+    // Because the absolute address is within the QRAM or I/O Ports, the address is always writable.
+    // Because the address is to be written to, set the destination address flag to true.
+    p_CPU->m_DA = true;
+
+    // Read the source register's value into the memory data register.
+    p_CPU->m_MD = TM_GetRegister(p_CPU, p_CPU->m_IP2);
+    return true;
+}
+
+bool TM_Fetch_ADDR8_REG (TM_CPU* p_CPU)
+{
+    // Argument 1: `ADDR8` = 8-bit Relative Address (Relative to Hardware I/O Ports)
+    // Argument 2: `REG` = Source Register
+
+    // Read the address from the bus at the program counter. Place it into the memory address
+    // register. The address is relative to the hardware I/O ports, so add the hardware I/O base
+    // address to it.
+    p_CPU->m_MA = TM_ReadByte(p_CPU, p_CPU->m_PC) + TM_IO_BEGIN;
+    TM_AdvanceCPU(p_CPU, 1);
+
+    // Because the absolute address is within the I/O Ports' address range, the address is always
+    // writable. Because the address is to be written to, set the destination address flag to true.
+    p_CPU->m_DA = true;
+    
+    // Read the source register's value into the memory data register.
+    p_CPU->m_MD = TM_GetRegister(p_CPU, p_CPU->m_IP2);
+    return true;
+}
+
+bool TM_Fetch_REGPTR32_REG (TM_CPU* p_CPU)
+{
+    // Argument 1: `REGPTR32` = Absolute Address (Register Pointer)
+    // Argument 2: `REG` = Source Register
+
+    // The register needs to contain a 32-bit address, so ensure that the source register is
+    // a 32-bit register.
+    if ((p_CPU->m_IP2 & 0b11) != 0b00)
+    {
+        p_CPU->m_EA = p_CPU->m_IA;
+        return TM_SetErrorCode(p_CPU, TM_EC_INVALID_ARGUMENT);
+    }
+
+    // Get the address from the source register. Place it into the memory address register.
+    p_CPU->m_MA = TM_GetRegister(p_CPU, p_CPU->m_IP2);
+
+    // Depending on the low two bits of the source register, make sure the address range of the
+    // appropriate size is writable.
+    switch (p_CPU->m_IP2 & 0b11)
+    {
+        case 0b00:
+            // Make sure the address is writable.
+            if (TM_IsWritable(p_CPU->m_MA, 4) == false)
+            {
+                p_CPU->m_EA = p_CPU->m_MA;
+                return TM_SetErrorCode(p_CPU, TM_EC_BAD_WRITE);
+            }
+            break;
+        case 0b01:
+            // Make sure the address is writable.
+            if (TM_IsWritable(p_CPU->m_MA, 2) == false)
+            {
+                p_CPU->m_EA = p_CPU->m_MA;
+                return TM_SetErrorCode(p_CPU, TM_EC_BAD_WRITE);
+            }
+            break;
+        default:
+            // Make sure the address is writable.
+            if (TM_IsWritable(p_CPU->m_MA, 1) == false)
+            {
+                p_CPU->m_EA = p_CPU->m_MA;
+                return TM_SetErrorCode(p_CPU, TM_EC_BAD_WRITE);
+            }
+            break;
+    }
+
+    // Because the address is to be written to, set the destination address flag to true.
+    p_CPU->m_DA = true;
+
+    // Read the source register's value into the memory data register.
+    p_CPU->m_MD = TM_GetRegister(p_CPU, p_CPU->m_IP2);
+
+    return true;
+}
+
+bool TM_Fetch_REGPTR16_REG (TM_CPU* p_CPU)
+{
+    // Argument 1: `REGPTR16` = 16-bit Relative Address (Register Pointer, Relative to QRAM)
+    // Argument 2: `REG` = Source Register
+
+    // The register needs to contain a 16-bit address, so ensure that the source register is
+    // a 16-bit register.
+    if ((p_CPU->m_IP2 & 0b11) != 0b01)
+    {
+        p_CPU->m_EA = p_CPU->m_IA;
+        return TM_SetErrorCode(p_CPU, TM_EC_INVALID_ARGUMENT);
+    }
+
+    // Get the address from the source register. Place it into the memory address register.
+    p_CPU->m_MA = TM_GetRegister(p_CPU, p_CPU->m_IP2) + TM_QRAM_BEGIN;
+
+    // Because the absolute address is within the QRAM or I/O Ports, the address is always writable.
+    // Because the address is to be written to, set the destination address flag to true.
+    p_CPU->m_DA = true;
+
+    // Read the source register's value into the memory data register.
+    p_CPU->m_MD = TM_GetRegister(p_CPU, p_CPU->m_IP2);
+
+    return true;
+}
+
+bool TM_Fetch_REGPTR8_REG (TM_CPU* p_CPU)
+{
+    // Argument 1: `REGPTR8` = 8-bit Relative Address (Register Pointer, Relative to Hardware I/O Ports)
+    // Argument 2: `REG` = Source Register
+
+    // The register needs to contain an 8-bit address, so ensure that the source register is
+    // an 8-bit register.
+    if ((p_CPU->m_IP2 & 0b11) < 0b10)
+    {
+        p_CPU->m_EA = p_CPU->m_IA;
+        return TM_SetErrorCode(p_CPU, TM_EC_INVALID_ARGUMENT);
+    }
+
+    // Get the address from the source register. Place it into the memory address register.
+    p_CPU->m_MA = TM_GetRegister(p_CPU, p_CPU->m_IP2) + TM_IO_BEGIN;
+
+    // Because the absolute address is within the I/O Ports' address range, the address is always
+    // writable. Because the address is to be written to, set the destination address flag to true.
+    p_CPU->m_DA = true;
+
+    // Read the source register's value into the memory data register.
+    p_CPU->m_MD = TM_GetRegister(p_CPU, p_CPU->m_IP2);
+
+    return true;
+}
+
+bool TM_Fetch_NULL_IMM (TM_CPU* p_CPU)
+{
+    // Argument 1: `NULL` = Nothing
+    // Argument 2: `IMM` = Immediate Value
+
+    // Read the immediate value from the bus at the program counter. Place it into the memory data
+    // register.
+    p_CPU->m_MD = TM_ReadDoubleWord(p_CPU, p_CPU->m_PC);
+    TM_AdvanceCPU(p_CPU, 4);
+
+    return (p_CPU->m_EC == TM_EC_OK);
+}
+
+bool TM_Fetch_NULL_SIMM16 (TM_CPU* p_CPU)
+{
+    // Argument 1: `NULL` = Nothing
+    // Argument 2: `SIMM16` = 16-bit Signed Immediate Value
+
+    // Read the immediate value from the bus at the program counter. Place it into the memory data
+    // register.
+    p_CPU->m_MD = TM_ReadWord(p_CPU, p_CPU->m_PC);
+    TM_AdvanceCPU(p_CPU, 2);
+
+    return (p_CPU->m_EC == TM_EC_OK);
+}
+
+bool TM_Fetch_REG_NULL (TM_CPU* p_CPU)
+{
+    // Argument 1: `REG` = Destination Register
+    // Argument 2: `NULL` = Nothing
+    
+    // Read the destination register's value into the memory data register.
+    p_CPU->m_MD = TM_GetRegister(p_CPU, p_CPU->m_IP1);
+    return true;
+}
+
+bool TM_Fetch_REGPTR32_NULL (TM_CPU* p_CPU)
+{
+    // Argument 1: `REGPTR32` = Absolute Address (Register Pointer)
+    // Argument 2: `NULL` = Nothing
+
+    // The register needs to contain a 32-bit address, so ensure that the destination register is
+    // a 32-bit register.
+    if ((p_CPU->m_IP1 & 0b11) != 0b00)
+    {
+        p_CPU->m_EA = p_CPU->m_IA;
+        return TM_SetErrorCode(p_CPU, TM_EC_INVALID_ARGUMENT);
+    }
+
+    // Get the address from the destination register. Place it into the memory address register.
+    p_CPU->m_MA = TM_GetRegister(p_CPU, p_CPU->m_IP1);
+    
+    // Depending on the low two bits of the destination register...
+    // - `0b00` = 32-bit register; read a double word at the address in the memory address register.
+    // - `0b01` = 16-bit register; read a word at the address in the memory address register.
+    // - Else   = 8-bit register; read a byte at the address in the memory address register.
+    //
+    // Place the data into the memory data register.
+    switch (p_CPU->m_IP1 & 0b11)
+    {
+        case 0b00:
+            // Make sure the address is readable.
+            if (TM_IsReadable(p_CPU->m_MA, 4) == false)
+            {
+                p_CPU->m_EA = p_CPU->m_MA;
+                return TM_SetErrorCode(p_CPU, TM_EC_BAD_READ);
+            }
+
+            // Read a double word from the bus at the address in the memory address register.
+            p_CPU->m_MD = TM_ReadDoubleWord(p_CPU, p_CPU->m_MA);
+            TM_CycleCPU(p_CPU, 4);
+            break;
+
+        case 0b01:
+            // Make sure the address is readable.
+            if (TM_IsReadable(p_CPU->m_MA, 2) == false)
+            {
+                p_CPU->m_EA = p_CPU->m_MA;
+                return TM_SetErrorCode(p_CPU, TM_EC_BAD_READ);
+            }
+
+            // Read a word from the bus at the address in the memory address register.
+            p_CPU->m_MD = TM_ReadWord(p_CPU, p_CPU->m_MA);
+            TM_CycleCPU(p_CPU, 2);
+            break;
+
+        default:
+            // Make sure the address is readable.
+            if (TM_IsReadable(p_CPU->m_MA, 1) == false)
+            {
+                p_CPU->m_EA = p_CPU->m_MA;
+                return TM_SetErrorCode(p_CPU, TM_EC_BAD_READ);
+            }
+
+            // Read a byte from the bus at the address in the memory address register.
+            p_CPU->m_MD = TM_ReadByte(p_CPU, p_CPU->m_MA);
+            TM_CycleCPU(p_CPU, 1);
+            break;
+    }
+
+    // Destination address.
+    p_CPU->m_DA = true;
+
+    return true;
+}
+
+// Private Function Prototypes - Instruction Execution /////////////////////////////////////////////
+
+static bool TM_Execute_NOP (TM_CPU* p_CPU);
+static bool TM_Execute_STOP (TM_CPU* p_CPU);
+static bool TM_Execute_HALT (TM_CPU* p_CPU);
+static bool TM_Execute_SEC (TM_CPU* p_CPU);
+static bool TM_Execute_CEC (TM_CPU* p_CPU);
+static bool TM_Execute_DI (TM_CPU* p_CPU);
+static bool TM_Execute_EI (TM_CPU* p_CPU);
+static bool TM_Execute_DAA (TM_CPU* p_CPU);
+static bool TM_Execute_SCF (TM_CPU* p_CPU);
+static bool TM_Execute_CCF (TM_CPU* p_CPU);
+static bool TM_Execute_LD (TM_CPU* p_CPU);
+static bool TM_Execute_ST (TM_CPU* p_CPU);
+static bool TM_Execute_MV (TM_CPU* p_CPU);
+static bool TM_Execute_PUSH (TM_CPU* p_CPU);
+static bool TM_Execute_POP (TM_CPU* p_CPU);
+static bool TM_Execute_JMP (TM_CPU* p_CPU);
+static bool TM_Execute_JPB (TM_CPU* p_CPU);
+static bool TM_Execute_CALL (TM_CPU* p_CPU);
+static bool TM_Execute_RST (TM_CPU* p_CPU);
+static bool TM_Execute_RET (TM_CPU* p_CPU);
+static bool TM_Execute_RETI (TM_CPU* p_CPU);
+static bool TM_Execute_JPS (TM_CPU* p_CPU);
+static bool TM_Execute_INC (TM_CPU* p_CPU);
+static bool TM_Execute_DEC (TM_CPU* p_CPU);
+static bool TM_Execute_ADD (TM_CPU* p_CPU, bool p_WithCarry);
+static bool TM_Execute_SUB (TM_CPU* p_CPU, bool p_WithCarry);
+static bool TM_Execute_AND (TM_CPU* p_CPU);
+static bool TM_Execute_OR (TM_CPU* p_CPU);
+static bool TM_Execute_XOR (TM_CPU* p_CPU);
+static bool TM_Execute_NOT (TM_CPU* p_CPU);
+static bool TM_Execute_CMP (TM_CPU* p_CPU);
+static bool TM_Execute_SLA (TM_CPU* p_CPU);
+static bool TM_Execute_SRA (TM_CPU* p_CPU);
+static bool TM_Execute_SRL (TM_CPU* p_CPU);
+static bool TM_Execute_RL (TM_CPU* p_CPU);
+static bool TM_Execute_RLC (TM_CPU* p_CPU);
+static bool TM_Execute_RR (TM_CPU* p_CPU);
+static bool TM_Execute_RRC (TM_CPU* p_CPU);
+static bool TM_Execute_BIT (TM_CPU* p_CPU);
+static bool TM_Execute_RES (TM_CPU* p_CPU);
+static bool TM_Execute_SET (TM_CPU* p_CPU);
+static bool TM_Execute_SWAP (TM_CPU* p_CPU);
+
+// Private Functions - Instruction Execution ///////////////////////////////////////////////////////
+
+// 0x0000 NOP
+static bool TM_Execute_NOP (TM_CPU* p_CPU)
+{
+    // No operation. Just return true.
+    return true;
+}
+
+// 0x0100 STOP
+static bool TM_Execute_STOP (TM_CPU* p_CPU)
+{
+    // Stop the CPU. This is a special instruction that stops the CPU from executing any further
+    // instructions until it is reset or restarted.
+    p_CPU->m_Stop = true;
+    return true;
+}
+
+// 0x0200 HALT
+static bool TM_Execute_HALT (TM_CPU* p_CPU)
+{
+    // Halt the CPU. This is a special instruction that halts the CPU until an interrupt is requested.
+    p_CPU->m_Halt = true;
+    return true;
+}
+
+// 0x03XX SEC XX
+static bool TM_Execute_SEC (TM_CPU* p_CPU)
+{
+    // Set the error code to the low byte of the instruction opcode.
+    p_CPU->m_EC = (p_CPU->m_CI & 0x00FF);
+    return true;
+}
+
+// 0x0400 CEC
+static bool TM_Execute_CEC (TM_CPU* p_CPU)
+{
+    // Clear the error code. This is a special instruction that clears the error code register.
+    p_CPU->m_EC = TM_EC_OK;
+    return true;
+}
+
+// 0x0500 DI
+static bool TM_Execute_DI (TM_CPU* p_CPU)
+{
+    // Disable interrupts. This is a special instruction that disables all interrupts.
+    p_CPU->m_IME = false;
+    return true;
+}
+
+// 0x0600 EI
+static bool TM_Execute_EI (TM_CPU* p_CPU)
+{
+    // Enable interrupts. This is a special instruction that enables all interrupts.
+    p_CPU->m_IME = true;
+    return true;
+}
+
+// 0x0700 DAA
+static bool TM_Execute_DAA (TM_CPU* p_CPU)
+{
+    // Decimal-adjust register AL.
+    // This is a special instruction that adjusts the value in the AL register to be a valid BCD
+    // value.
+
+    uint8_t l_AL = TM_GetRegister(p_CPU, TM_REG_AL);
+    uint8_t l_Adjust = 0, l_Result = 0;
+
+    if (p_CPU->m_Flags.m_H == true || (l_AL & 0x0F) > 0x9)
+    {
+        l_Adjust = 0x06;
+    }
+
+    if (p_CPU->m_Flags.m_C == true || (l_AL & 0xF0) > 0x90)
+    {
+        l_Adjust += 0x60;
+        p_CPU->m_Flags.m_C = true;
+    }
+    else
+    {
+        p_CPU->m_Flags.m_C = false;
+    }
+
+    // Adjust the AL register by either adding or subtracting the adjustment value, depending on the
+    // subtraction flag.
+    l_Result = (p_CPU->m_Flags.m_N == true) ? (l_AL - l_Adjust) : (l_AL + l_Adjust);
+    TM_SetRegister(p_CPU, TM_REG_AL, l_Result);
+
+    // Set the flags register based on the result of the adjustment.
+    p_CPU->m_Flags.m_Z = (l_Result == 0);
+    p_CPU->m_Flags.m_H = false;
+
+    return true;
+}
+
+// 0x0800 SCF
+static bool TM_Execute_SCF (TM_CPU* p_CPU)
+{
+    // Set the carry flag. This is a special instruction that sets the carry flag in the flags
+    // register.
+    p_CPU->m_Flags.m_C = true;
+    p_CPU->m_Flags.m_N = false;
+    p_CPU->m_Flags.m_H = false;
+    return true;
+}
+
+// 0x0900 CCF
+static bool TM_Execute_CCF (TM_CPU* p_CPU)
+{
+    // Complement the carry flag. This is a special instruction that toggles the carry flag in the
+    // flags register.
+    p_CPU->m_Flags.m_C = !p_CPU->m_Flags.m_C;
+    p_CPU->m_Flags.m_N = false;
+    p_CPU->m_Flags.m_H = false;
+    return true;
+}
+
+// 0x10X0 LD X, IMM
+// 0x11X0 LD X, [ADDR32]
+// 0x12XY LD X, [Y]
+// 0x13X0 LDQ X, [ADDR16]
+// 0x14XY LDQ X, [Y]
+// 0x15X0 LDH X, [ADDR8]
+// 0x16XY LDH X, [Y]
+static bool TM_Execute_LD (TM_CPU* p_CPU)
+{
+    // Load the value from the memory data register into the destination register. The destination
+    // register is determined by the instruction opcode.
+    TM_SetRegister(p_CPU, p_CPU->m_IP1, p_CPU->m_MD);
+
+    return true;
+}
+
+// 0x170Y ST [ADDR32], Y
+// 0x18XY ST [X], Y
+// 0x190Y STQ [ADDR16], Y
+// 0x1AXY STQ [X], Y
+// 0x1B0Y STH [ADDR8], Y
+// 0x1CXY STH [X], Y
+static bool TM_Execute_ST (TM_CPU* p_CPU)
+{
+    // Depending upon the low two bits of the source register...
+    // - `0b00` = 32-bit register; write a double word at the address in the memory address register.
+    // - `0b01` = 16-bit register; write a word at the address in the memory address register.
+    // - Else   = 8-bit register; write a byte at the address in the memory address register.
+    //
+    // Place the data from the memory data register into the bus at the address in the memory
+    // address register.
+    switch (p_CPU->m_IP2 & 0b11)
+    {
+        case 0b00:
+            // Write a double word to the bus at the address in the memory address register.
+            TM_WriteDoubleWord(p_CPU, p_CPU->m_MA, p_CPU->m_MD);
+            TM_CycleCPU(p_CPU, 4);
+            break;
+
+        case 0b01:
+            // Write a word to the bus at the address in the memory address register.
+            TM_WriteWord(p_CPU, p_CPU->m_MA, p_CPU->m_MD);
+            TM_CycleCPU(p_CPU, 2);
+            break;
+
+        default:
+            // Write a byte to the bus at the address in the memory address register.
+            TM_WriteByte(p_CPU, p_CPU->m_MA, p_CPU->m_MD);
+            TM_CycleCPU(p_CPU, 1);
+            break;
+    }
+
+    return true;
+}
+
+// 0x1DXY MV X, Y
+static bool TM_Execute_MV (TM_CPU* p_CPU)
+{
+    // Move the value from the source register to the destination register. The destination
+    // register is determined by the instruction opcode.
+    TM_SetRegister(p_CPU, p_CPU->m_IP1, TM_GetRegister(p_CPU, p_CPU->m_IP2));
+
+    return true;
+}
+
+// 0x1E0Y PUSH Y
+static bool TM_Execute_PUSH (TM_CPU* p_CPU)
+{
+    // Push the value from the source register onto the stack. The stack pointer is decremented
+    // before the value is pushed onto the stack.
+    TM_PushData(p_CPU, TM_GetRegister(p_CPU, p_CPU->m_IP2));
+    return (p_CPU->m_EC == TM_EC_OK);
+}
+
+// 0x1FX0 POP X
+static bool TM_Execute_POP (TM_CPU* p_CPU)
+{
+    // Pop the value from the stack into the destination register. The stack pointer is incremented
+    // after the value is popped from the stack.
+    uint32_t l_Popped = TM_PopData(p_CPU);
+    if (p_CPU->m_EC != TM_EC_OK)
+    {
+        return false;
+    }
+
+    TM_SetRegister(p_CPU, p_CPU->m_IP1, l_Popped);
+    return true;
+}
+
+// 0x20X0 JMP X, ADDR32
+// 0x21XY JMP X, Y
+static bool TM_Execute_JMP (TM_CPU* p_CPU)
+{
+    // The first parameter contains the execution condition. Check it.
+    if (TM_CheckCondition(p_CPU, p_CPU->m_IP1) == false)
+    {
+        return true;
+    }
+
+    // Move the program counter to the address in the memory data register.
+    p_CPU->m_PC = p_CPU->m_MD;
+
+    // One cycle for moving the program counter.
+    TM_CycleCPU(p_CPU, 1);
+    return (p_CPU->m_EC == TM_EC_OK);
+}
+
+// 0x22X0 JPB X, SIMM16
+static bool TM_Execute_JPB (TM_CPU* p_CPU)
+{
+    // The first parameter contains the execution condition. Check it.
+    if (TM_CheckCondition(p_CPU, p_CPU->m_IP1) == false)
+    {
+        return true;
+    }
+
+    // Move the program counter to the address in the memory data register. Remember to truncate
+    // the MDR and cast it to a signed 16-bit integer, first.
+    p_CPU->m_PC += (int16_t) (p_CPU->m_MD & 0xFFFF);
+
+    // One cycle for moving the program counter.
+    TM_CycleCPU(p_CPU, 1);
+    return (p_CPU->m_EC == TM_EC_OK);
+}
+
+// 0x23X0 CALL X, ADDR32
+static bool TM_Execute_CALL (TM_CPU* p_CPU)
+{
+    // The first parameter contains the execution condition. Check it.
+    if (TM_CheckCondition(p_CPU, p_CPU->m_IP1) == false)
+    {
+        return true;
+    }
+
+    // Push the program counter onto the call stack.
+    TM_PushAddress(p_CPU, p_CPU->m_PC);
+    if (p_CPU->m_EC != TM_EC_OK)
+    {
+        return false;
+    }
+
+    // Move the program counter to the address in the memory data register.
+    p_CPU->m_PC = p_CPU->m_MD;
+
+    // One cycle for moving the program counter.
+    TM_CycleCPU(p_CPU, 1);
+    return (p_CPU->m_EC == TM_EC_OK);
+}
+
+// 0x240Y RST Y
+static bool TM_Execute_RST (TM_CPU* p_CPU)
+{
+    // Push the program counter onto the call stack.
+    TM_PushAddress(p_CPU, p_CPU->m_PC);
+    if (p_CPU->m_EC != TM_EC_OK)
+    {
+        return false;
+    }
+
+    // Move the program counter to the address in the instruction register.
+    p_CPU->m_PC = TM_RST_BEGIN + (0x100 * p_CPU->m_IP2);
+
+    // One cycle for moving the program counter.
+    TM_CycleCPU(p_CPU, 1);
+    return (p_CPU->m_EC == TM_EC_OK);
+}
+
+// 0x25X0 RET X
+static bool TM_Execute_RET (TM_CPU* p_CPU)
+{
+    // The first parameter contains the execution condition. Check it.
+    if (TM_CheckCondition(p_CPU, p_CPU->m_IP1) == false)
+    {
+        return true;
+    }
+    
+    // Get the return address from the call stack.
+    uint32_t l_ReturnAddress = TM_PopAddress(p_CPU);
+
+    // If the call stack was empty, then the stop flag will be set. Check it, as it indicates a
+    // normal program exit.
+    if (p_CPU->m_Stop == true)
+    {
+        return true;
+    }
+
+    // Move the program counter to the return address.
+    p_CPU->m_PC = l_ReturnAddress;
+
+    // One cycle for moving the program counter.
+    TM_CycleCPU(p_CPU, 1);
+    return (p_CPU->m_EC == TM_EC_OK);
+}
+
+// 0x2600 RETI
+static bool TM_Execute_RETI (TM_CPU* p_CPU)
+{
+    // Get the return address from the call stack.
+    uint32_t l_ReturnAddress = TM_PopAddress(p_CPU);
+
+    // If the call stack was empty, then the stop flag will be set. Check it, as it indicates a
+    // normal program exit.
+    if (p_CPU->m_Stop == true)
+    {
+        return true;
+    }
+
+    // Move the program counter to the return address. Also, enable the interrupt master flag.
+    p_CPU->m_PC = l_ReturnAddress;
+    p_CPU->m_IME = true;
+
+    // One cycle for moving the program counter.
+    TM_CycleCPU(p_CPU, 1);
+    return (p_CPU->m_EC == TM_EC_OK);
+}
+
+// 0x2700 JPS
+static bool TM_Execute_JPS (TM_CPU* p_CPU)
+{
+    // Move the program counter to the start of the code address range.
+    p_CPU->m_PC = TM_CODE_BEGIN;
+
+    // One cycle for moving the program counter.
+    TM_CycleCPU(p_CPU, 1);
+    return (p_CPU->m_EC == TM_EC_OK);
+}
+
+// 0x30X0 INC X
+// 0x310Y INC [Y]
+static bool TM_Execute_INC (TM_CPU* p_CPU)
+{
+    // Increment the value in the memory data register.
+    p_CPU->m_MD++;
+
+    // If the destination address flag is set, then write the incremented value back to the bus
+    // at the address in the memory address register.
+    //
+    // Otherwise, write the incremented value back to the destination register.
+    if (p_CPU->m_DA == true)
+    {
+        TM_WriteByte(p_CPU, p_CPU->m_MA, p_CPU->m_MD & 0xFF);
+        TM_CycleCPU(p_CPU, 1);
+        if (p_CPU->m_EC != TM_EC_OK)
+        {
+            return false;
+        }
+    }
+    else
+    {
+        TM_SetRegister(p_CPU, p_CPU->m_IP1, p_CPU->m_MD);
+    }
+
+    // Set the flags register based on either the size of the destination register or whether the
+    // destination address flag is set.
+    if (p_CPU->m_DA == true || (p_CPU->m_IP1 & 0b11) >= 2)
+    {
+        p_CPU->m_Flags.m_Z = ((p_CPU->m_MD & 0xFF) == 0);
+        p_CPU->m_Flags.m_H = ((p_CPU->m_MD & 0x0F) == 0);
+    }
+    else if ((p_CPU->m_IP1 & 0b11) == 0b01)
+    {
+        p_CPU->m_Flags.m_Z = ((p_CPU->m_MD & 0xFFFF) == 0);
+    }
+    else
+    {
+        p_CPU->m_Flags.m_Z = (p_CPU->m_MD == 0);
+    }
+
+    // Regardless, clear the negative flag as there is no subtraction involved.
+    p_CPU->m_Flags.m_N = false;
+
+    return true;
+}
+
+// 0x32X0 DEC X
+// 0x330Y DEC [Y]
+static bool TM_Execute_DEC (TM_CPU* p_CPU)
+{
+    // Decrement the value in the memory data register.
+    p_CPU->m_MD--;
+
+    // If the destination address flag is set, then write the decremented value back to the bus
+    // at the address in the memory address register.
+    //
+    // Otherwise, write the decremented value back to the destination register.
+    if (p_CPU->m_DA == true)
+    {
+        TM_WriteByte(p_CPU, p_CPU->m_MA, p_CPU->m_MD & 0xFF);
+        TM_CycleCPU(p_CPU, 1);
+        if (p_CPU->m_EC != TM_EC_OK)
+        {
+            return false;
+        }
+    }
+    else
+    {
+        TM_SetRegister(p_CPU, p_CPU->m_IP1, p_CPU->m_MD);
+    }
+
+    // Set the flags register based on either the size of the destination register or whether the
+    // destination address flag is set.
+    if (p_CPU->m_DA == true || (p_CPU->m_IP1 & 0b11) >= 2)
+    {
+        p_CPU->m_Flags.m_Z = ((p_CPU->m_MD & 0xFF) == 0);
+        p_CPU->m_Flags.m_H = ((p_CPU->m_MD & 0x0F) == 0x0F);
+    }
+    else if ((p_CPU->m_IP1 & 0b11) == 0b01)
+    {
+        p_CPU->m_Flags.m_Z = ((p_CPU->m_MD & 0xFFFF) == 0);
+    }
+    else
+    {
+        p_CPU->m_Flags.m_Z = (p_CPU->m_MD == 0);
+    }
+
+    // Regardless, set the negative flag as decrementation involves subtraction.
+    p_CPU->m_Flags.m_N = true;
+
+    return true;
+}
+
+// `p_WithCarry == false`
+//      0x34X0 ADD X, IMM
+//      0x35XY ADD X, Y
+//      0x36XY ADD X, [Y]
+// `p_WithCarry == true`
+//      0x37X0 ADC X, IMM
+//      0x38XY ADC X, Y
+//      0x39XY ADC X, [Y]
+static bool TM_Execute_ADD (TM_CPU* p_CPU, bool p_WithCarry)
+{
+    // The destination register must be an accumulator register.
+    if ((p_CPU->m_IP1 & 0b1100) != 0b00)
+    {
+        p_CPU->m_EA = p_CPU->m_IA;
+        return TM_SetErrorCode(p_CPU, TM_EC_INVALID_ARGUMENT);
+    }
+
+    // Get the values of the accumulator register, the memory data register and, if `p_WithCarry` is
+    // `true`, the value of the carry flag.
+    uint32_t l_Accumulator = TM_GetRegister(p_CPU, p_CPU->m_IP1);
+    uint32_t l_Addend = p_CPU->m_MD;
+    uint8_t  l_Carry = (p_WithCarry == true) ? p_CPU->m_Flags.m_C : 0;
+
+    // Add the values together and store the result in the destination register.
+    uint64_t l_Result = l_Accumulator + l_Addend + l_Carry;
+    TM_SetRegister(p_CPU, p_CPU->m_IP1, l_Result & 0xFFFFFFFF);
+
+    // Set the flags register based on the size of the destination register.
+    //
+    // To properly set the half-carry flag, an additional addition is performed on all but the
+    // leftmost bits of the above-calculated operands.
+    if ((p_CPU->m_IP1 & 0b11) >= 2)
+    {
+        uint8_t l_HalfCarry = ((l_Accumulator & 0xF) + (l_Addend & 0xF) + l_Carry);
+        p_CPU->m_Flags.m_Z = ((l_Result & 0xFF) == 0);
+        p_CPU->m_Flags.m_H = (l_HalfCarry > 0xF);
+        p_CPU->m_Flags.m_C = (l_Result > 0xFF);
+    }
+    else if ((p_CPU->m_IP1 & 0b11) == 0b01)
+    {
+        uint16_t l_HalfCarry = ((l_Accumulator & 0xFFF) + (l_Addend & 0xFFF) + l_Carry);
+        p_CPU->m_Flags.m_Z = ((l_Result & 0xFFFF) == 0);
+        p_CPU->m_Flags.m_H = (l_HalfCarry > 0xFFF);
+        p_CPU->m_Flags.m_C = (l_Result > 0xFFFF);
+    }
+    else
+    {
+        uint32_t l_HalfCarry = ((l_Accumulator & 0xFFFFFFF) + (l_Addend & 0xFFFFFFF) + l_Carry);
+        p_CPU->m_Flags.m_Z = (l_Result & 0xFFFFFFFF) == 0;
+        p_CPU->m_Flags.m_H = (l_HalfCarry > 0xFFFFFFF);
+        p_CPU->m_Flags.m_C = (l_Result > 0xFFFFFFFF);
+    }
+
+    // Regardless, clear the negative flag as there is no subtraction involved.
+    p_CPU->m_Flags.m_N = false;
+
+    return true;
+}
+
+// `p_WithCarry == false`
+//      0x3AX0 SUB X, IMM
+//      0x3BXY SUB X, Y
+//      0x3CXY SUB X, [Y]
+// `p_WithCarry == true`
+//      0x3DXY SBC X, IMM
+//      0x3EXY SBC X, Y
+//      0x3FXY SBC X, [Y]
+static bool TM_Execute_SUB (TM_CPU* p_CPU, bool p_WithCarry)
+{
+    // The destination register must be an accumulator register.
+    if ((p_CPU->m_IP1 & 0b1100) != 0b00)
+    {
+        p_CPU->m_EA = p_CPU->m_IA;
+        return TM_SetErrorCode(p_CPU, TM_EC_INVALID_ARGUMENT);
+    }
+
+    // Get the values of the accumulator register, the memory data register and, if `p_WithCarry` is
+    // `true`, the value of the carry flag.
+    uint32_t l_Accumulator = TM_GetRegister(p_CPU, p_CPU->m_IP1);
+    uint32_t l_Subtractend = p_CPU->m_MD;
+    uint8_t  l_Carry = (p_WithCarry == true) ? p_CPU->m_Flags.m_C : 0;
+
+    // Subtract the subtractend and carry from the accumulator. Store the result in a signed 64-bit
+    // integer in case of underflow. Store the result in the destination register.
+    int64_t l_Result = l_Accumulator - l_Subtractend - l_Carry;
+    TM_SetRegister(p_CPU, p_CPU->m_IP1, l_Result & 0xFFFFFFFF);
+
+    // Set the flags register based on the size of the destination register.
+    //
+    // To properly set the half-carry flag, an additional subtraction is performed on all but the
+    // leftmost bits of the above-calculated operands.
+    if ((p_CPU->m_IP1 & 0b11) >= 2)
+    {
+        int8_t l_HalfCarry = ((l_Accumulator & 0xF) - (l_Subtractend & 0xF) - l_Carry);
+        p_CPU->m_Flags.m_Z = ((l_Result & 0xFF) == 0);
+        p_CPU->m_Flags.m_H = (l_HalfCarry < 0);
+        p_CPU->m_Flags.m_C = (l_Result < 0);
+    }
+    else if ((p_CPU->m_IP1 & 0b11) == 0b01)
+    {
+        int16_t l_HalfCarry = ((l_Accumulator & 0xFFF) - (l_Subtractend & 0xFFF) - l_Carry);
+        p_CPU->m_Flags.m_Z = ((l_Result & 0xFFFF) == 0);
+        p_CPU->m_Flags.m_H = (l_HalfCarry < 0);
+        p_CPU->m_Flags.m_C = (l_Result < 0);
+    }
+    else
+    {
+        int32_t l_HalfCarry = ((l_Accumulator & 0xFFFFFFF) - (l_Subtractend & 0xFFFFFFF) - l_Carry);
+        p_CPU->m_Flags.m_Z = (l_Result & 0xFFFFFFFF) == 0;
+        p_CPU->m_Flags.m_H = (l_HalfCarry < 0);
+        p_CPU->m_Flags.m_C = (l_Result < 0);
+    }
+
+    // Regardless, set the negative flag as there is a subtraction involved.
+    p_CPU->m_Flags.m_N = true;
+
+    return true;
+}
+
+// 0x40X0 AND X, IMM
+// 0x41XY AND X, Y
+// 0x42XY AND X, [Y]
+static bool TM_Execute_AND (TM_CPU* p_CPU)
+{
+    // The destination register must be an accumulator register.
+    if ((p_CPU->m_IP1 & 0b1100) != 0b00)
+    {
+        p_CPU->m_EA = p_CPU->m_IA;
+        return TM_SetErrorCode(p_CPU, TM_EC_INVALID_ARGUMENT);
+    }
+
+    // Get the value of the accumulator register and the memory data register.
+    uint32_t l_Accumulator = TM_GetRegister(p_CPU, p_CPU->m_IP1);
+    uint32_t l_Operand = p_CPU->m_MD;
+
+    // Perform a bitwise AND operation on the two values. Store the result in the destination
+    // register.
+    uint32_t l_Result = l_Accumulator & l_Operand;
+    TM_SetRegister(p_CPU, p_CPU->m_IP1, l_Result);
+
+    // Set the flags register based on either the size of the destination register or whether the
+    // destination address flag is set.
+    if ((p_CPU->m_IP1 & 0b11) >= 2)
+    {
+        p_CPU->m_Flags.m_Z = ((l_Result & 0xFF) == 0);
+    }
+    else if ((p_CPU->m_IP1 & 0b11) == 0b01)
+    {
+        p_CPU->m_Flags.m_Z = ((l_Result & 0xFFFF) == 0);
+    }
+    else
+    {
+        p_CPU->m_Flags.m_Z = (l_Result == 0);
+    }
+
+    // Regardless, set the half-carry flag and clear the subtraction and carry flags.
+    p_CPU->m_Flags.m_H = true;
+    p_CPU->m_Flags.m_N = false;
+    p_CPU->m_Flags.m_C = false;
+
+    return true;
+}
+
+// 0x43X0 OR X, IMM
+// 0x44XY OR X, Y
+// 0x45XY OR X, [Y]
+static bool TM_Execute_OR (TM_CPU* p_CPU)
+{
+    // The destination register must be an accumulator register.
+    if ((p_CPU->m_IP1 & 0b1100) != 0b00)
+    {
+        p_CPU->m_EA = p_CPU->m_IA;
+        return TM_SetErrorCode(p_CPU, TM_EC_INVALID_ARGUMENT);
+    }
+
+    // Get the value of the accumulator register and the memory data register.
+    uint32_t l_Accumulator = TM_GetRegister(p_CPU, p_CPU->m_IP1);
+    uint32_t l_Operand = p_CPU->m_MD;
+
+    // Perform a bitwise OR operation on the two values. Store the result in the destination
+    // register.
+    uint32_t l_Result = l_Accumulator | l_Operand;
+    TM_SetRegister(p_CPU, p_CPU->m_IP1, l_Result);
+
+    // Set the flags register based on the size of the destination register.
+    if ((p_CPU->m_IP1 & 0b11) >= 2)
+    {
+        p_CPU->m_Flags.m_Z = ((l_Result & 0xFF) == 0);
+    }
+    else if ((p_CPU->m_IP1 & 0b11) == 0b01)
+    {
+        p_CPU->m_Flags.m_Z = ((l_Result & 0xFFFF) == 0);
+    }
+    else
+    {
+        p_CPU->m_Flags.m_Z = (l_Result == 0);
+    }
+
+    // Regardless, clear the negative, half-carry and carry flags.
+    p_CPU->m_Flags.m_N = false;
+    p_CPU->m_Flags.m_H = false;
+    p_CPU->m_Flags.m_C = false;
+
+    return true;
+}
+
+// 0x46X0 XOR X, IMM
+// 0x47XY XOR X, Y
+// 0x48XY XOR X, [Y]
+static bool TM_Execute_XOR (TM_CPU* p_CPU)
+{
+    // The destination register must be an accumulator register.
+    if ((p_CPU->m_IP1 & 0b1100) != 0b00)
+    {
+        p_CPU->m_EA = p_CPU->m_IA;
+        return TM_SetErrorCode(p_CPU, TM_EC_INVALID_ARGUMENT);
+    }
+
+    // Get the value of the accumulator register and the memory data register.
+    uint32_t l_Accumulator = TM_GetRegister(p_CPU, p_CPU->m_IP1);
+    uint32_t l_Operand = p_CPU->m_MD;
+
+    // Perform a bitwise XOR operation on the two values. Store the result in the destination
+    // register.
+    uint32_t l_Result = l_Accumulator ^ l_Operand;
+    TM_SetRegister(p_CPU, p_CPU->m_IP1, l_Result);
+
+    // Set the flags register based on the size of the destination register.
+    if ((p_CPU->m_IP1 & 0b11) >= 2)
+    {
+        p_CPU->m_Flags.m_Z = ((l_Result & 0xFF) == 0);
+    }
+    else if ((p_CPU->m_IP1 & 0b11) == 0b01)
+    {
+        p_CPU->m_Flags.m_Z = ((l_Result & 0xFFFF) == 0);
+    }
+    else
+    {
+        p_CPU->m_Flags.m_Z = (l_Result == 0);
+    }
+
+    // Regardless, clear the negative, half-carry and carry flags.
+    p_CPU->m_Flags.m_N = false;
+    p_CPU->m_Flags.m_H = false;
+    p_CPU->m_Flags.m_C = false;
+
+    return true;
+}
+
+// 0x49X0 NOT X
+// 0x4A0Y NOT [Y]
+static bool TM_Execute_NOT (TM_CPU* p_CPU)
+{
+    // Compliment the value in the memory data register. Store the result.
+    uint32_t l_Result = ~p_CPU->m_MD;
+
+    // If the destination address flag is set, then write the result back to the bus at the address
+    // in the memory address register.
+    //
+    // Otherwise, write the result back to the destination register.
+    if (p_CPU->m_DA == true)
+    {
+        TM_WriteByte(p_CPU, p_CPU->m_MA, l_Result & 0xFF);
+        TM_CycleCPU(p_CPU, 1);
+        if (p_CPU->m_EC != TM_EC_OK)
+        {
+            return false;
+        }
+    }
+    else
+    {
+        TM_SetRegister(p_CPU, p_CPU->m_IP1, l_Result);
+    }
+
+    // Set the flags register based on either the size of the destination register or whether the
+    // destination address flag is set.
+    if (p_CPU->m_DA == true || (p_CPU->m_IP1 & 0b11) >= 2)
+    {
+        p_CPU->m_Flags.m_Z = ((l_Result & 0xFF) == 0);
+    }
+    else if ((p_CPU->m_IP1 & 0b11) == 0b01)
+    {
+        p_CPU->m_Flags.m_Z = ((l_Result & 0xFFFF) == 0);
+    }
+    else
+    {
+        p_CPU->m_Flags.m_Z = (l_Result == 0);
+    }
+
+    // Set the subtraction and half-carry flags.
+    p_CPU->m_Flags.m_N = true;
+    p_CPU->m_Flags.m_H = true;
+
+    return true;
+}
+
+// 0x50X0 CMP X, IMM
+// 0x51XY CMP X, Y
+// 0x52XY CMP X, [Y]
+static bool TM_Execute_CMP (TM_CPU* p_CPU)
+{
+    // This is the same as the `SUB` instruction, only the result is discarded. The flags are set
+    // based on the result of the subtraction.
+
+    // The destination register must be an accumulator register.
+    if ((p_CPU->m_IP1 & 0b1100) != 0b00)
+    {
+        p_CPU->m_EA = p_CPU->m_IA;
+        return TM_SetErrorCode(p_CPU, TM_EC_INVALID_ARGUMENT);
+    }
+
+    // Get the values of the accumulator register and the memory data register.
+    uint32_t l_Accumulator = TM_GetRegister(p_CPU, p_CPU->m_IP1);
+    uint32_t l_Subtractend = p_CPU->m_MD;
+
+    // Subtract the subtractend from the accumulator. Store the result in a signed 64-bit integer
+    // in case of underflow.
+    int64_t l_Result = l_Accumulator - l_Subtractend;
+
+    // Set the flags register based on the size of the destination register.
+    //
+    // To properly set the half-carry flag, an additional subtraction is performed on all but the
+    // leftmost bits of the above-calculated operands.
+    if ((p_CPU->m_IP1 & 0b11) >= 2)
+    {
+        int8_t l_HalfCarry = ((l_Accumulator & 0xF) - (l_Subtractend & 0xF));
+        p_CPU->m_Flags.m_Z = ((l_Result & 0xFF) == 0);
+        p_CPU->m_Flags.m_H = (l_HalfCarry < 0);
+        p_CPU->m_Flags.m_C = (l_Result < 0);
+    }
+    else if ((p_CPU->m_IP1 & 0b11) == 0b01)
+    {
+        int16_t l_HalfCarry = ((l_Accumulator & 0xFFF) - (l_Subtractend & 0xFFF));
+        p_CPU->m_Flags.m_Z = ((l_Result & 0xFFFF) == 0);
+        p_CPU->m_Flags.m_H = (l_HalfCarry < 0);
+        p_CPU->m_Flags.m_C = (l_Result < 0);
+    }
+    else
+    {
+        int32_t l_HalfCarry = ((l_Accumulator & 0xFFFFFFF) - (l_Subtractend & 0xFFFFFFF));
+        p_CPU->m_Flags.m_Z = (l_Result & 0xFFFFFFFF) == 0;
+        p_CPU->m_Flags.m_H = (l_HalfCarry < 0);
+        p_CPU->m_Flags.m_C = (l_Result < 0);
+    }
+
+    // Regardless, set the negative flag as there is a subtraction involved.
+    p_CPU->m_Flags.m_N = true;
+
+    return true;
+}
+
+// 0x60X0 SLA X
+// 0x610Y SLA [Y]
+static bool TM_Execute_SLA (TM_CPU* p_CPU)
+{
+    // Shift the value in the memory data register left by one bit. Store the result.
+    uint32_t l_Result = p_CPU->m_MD << 1;
+
+    // If the destination address flag is set, then write the result back to the bus at the address
+    // in the memory address register.
+    //
+    // Otherwise, write the result back to the destination register.
+    if (p_CPU->m_DA == true)
+    {
+        TM_WriteByte(p_CPU, p_CPU->m_MA, l_Result & 0xFF);
+        TM_CycleCPU(p_CPU, 1);
+        if (p_CPU->m_EC != TM_EC_OK)
+        {
+            return false;
+        }
+    }
+    else
+    {
+        TM_SetRegister(p_CPU, p_CPU->m_IP1, l_Result);
+    }
+
+    // Set the flags register based on either the size of the destination register or whether the
+    // destination address flag is set.
+    if (p_CPU->m_DA == true || (p_CPU->m_IP1 & 0b11) >= 2)
+    {
+        p_CPU->m_Flags.m_C = ((p_CPU->m_MD & 0x80) != 0);
+        p_CPU->m_Flags.m_Z = ((l_Result & 0xFF) == 0);
+    }
+    else if ((p_CPU->m_IP1 & 0b11) == 0b01)
+    {
+        p_CPU->m_Flags.m_C = ((p_CPU->m_MD & 0x8000) != 0);
+        p_CPU->m_Flags.m_Z = ((l_Result & 0xFFFF) == 0);
+    }
+    else
+    {
+        p_CPU->m_Flags.m_C = ((p_CPU->m_MD & 0x80000000) != 0);
+        p_CPU->m_Flags.m_Z = (l_Result == 0);
+    }
+
+    // Clear the negative and half-carry flags.
+    p_CPU->m_Flags.m_N = false;
+    p_CPU->m_Flags.m_H = false;
+
+    return true;
+}
+
+// 0x62X0 SRA X
+// 0x630Y SRA [Y]
+static bool TM_Execute_SRA (TM_CPU* p_CPU)
+{
+    // Shift the value in the memory data register right by one bit. Store the result.
+    uint32_t l_Result = p_CPU->m_MD >> 1;
+
+    // If the destination address flag is set, then write the result back to the bus at the address
+    // in the memory address register.
+    //
+    // Otherwise, write the result back to the destination register.
+    if (p_CPU->m_DA == true)
+    {
+        // Before writing the result, make sure bit 7 is set to bit 7 of the original value.
+        l_Result |= (p_CPU->m_MD & 0x80);
+
+        TM_WriteByte(p_CPU, p_CPU->m_MA, l_Result & 0xFF);
+        TM_CycleCPU(p_CPU, 1);
+        if (p_CPU->m_EC != TM_EC_OK)
+        {
+            return false;
+        }
+    }
+    else
+    {
+        // Before writing the result, based on the size of the destination register, make sure either
+        // bit 7, 15 or 31 is set to the original value's leftmost bit.
+        if ((p_CPU->m_IP1 & 0b11) >= 2)
+        {
+            l_Result |= (p_CPU->m_MD & 0x80);
+        }
+        else if ((p_CPU->m_IP1 & 0b11) == 0b01)
+        {
+            l_Result |= (p_CPU->m_MD & 0x8000);
+        }
+        else
+        {
+            l_Result |= (p_CPU->m_MD & 0x80000000);
+        }
+
+        TM_SetRegister(p_CPU, p_CPU->m_IP1, l_Result);
+    }
+
+    // Set the flags register based on either the size of the destination register or whether the
+    // destination address flag is set.
+    if (p_CPU->m_DA == true || (p_CPU->m_IP1 & 0b11) >= 2)
+    {
+        p_CPU->m_Flags.m_Z = ((l_Result & 0xFF) == 0);
+    }
+    else if ((p_CPU->m_IP1 & 0b11) == 0b01)
+    {
+        p_CPU->m_Flags.m_Z = ((l_Result & 0xFFFF) == 0);
+    }
+    else
+    {
+        p_CPU->m_Flags.m_Z = (l_Result == 0);
+    }
+
+    // Set the carry flag and clear the negative and half-carry flags.
+    p_CPU->m_Flags.m_C = ((p_CPU->m_MD & 0x01) != 0);
+    p_CPU->m_Flags.m_N = false;
+    p_CPU->m_Flags.m_H = false;
+
+    return true;
+}
+
+// 0x64X0 SRL X
+// 0x650Y SRL [Y]
+static bool TM_Execute_SRL (TM_CPU* p_CPU)
+{
+    // Shift the value in the memory data register right by one bit. Store the result.
+    uint32_t l_Result = p_CPU->m_MD >> 1;
+
+    // If the destination address flag is set, then write the result back to the bus at the address
+    // in the memory address register.
+    //
+    // Otherwise, write the result back to the destination register.
+    if (p_CPU->m_DA == true)
+    {
+        // Before writing the result, make sure bit 7 is set to 0.
+        l_Result &= 0x7F;
+
+        TM_WriteByte(p_CPU, p_CPU->m_MA, l_Result & 0xFF);
+        TM_CycleCPU(p_CPU, 1);
+        if (p_CPU->m_EC != TM_EC_OK)
+        {
+            return false;
+        }
+    }
+    else
+    {
+        // Before writing the result, based on the size of the destination register, make sure either
+        // bit 7, 15 or 31 is set to 0.
+        if ((p_CPU->m_IP1 & 0b11) >= 2)
+        {
+            l_Result &= 0x7F;
+        }
+        else if ((p_CPU->m_IP1 & 0b11) == 0b01)
+        {
+            l_Result &= 0x7FFF;
+        }
+        else
+        {
+            l_Result &= 0x7FFFFFFF;
+        }
+
+        TM_SetRegister(p_CPU, p_CPU->m_IP1, l_Result);
+    }
+
+    // Set the flags register based on either the size of the destination register or whether the
+    // destination address flag is set.
+    if (p_CPU->m_DA == true || (p_CPU->m_IP1 & 0b11) >= 2)
+    {
+        p_CPU->m_Flags.m_Z = ((l_Result & 0xFF) == 0);
+    }
+    else if ((p_CPU->m_IP1 & 0b11) == 0b01)
+    {
+        p_CPU->m_Flags.m_Z = ((l_Result & 0xFFFF) == 0);
+    }
+    else
+    {
+        p_CPU->m_Flags.m_Z = (l_Result == 0);
+    }
+
+    // Set the carry flag and clear the negative and half-carry flags.
+    p_CPU->m_Flags.m_C = ((p_CPU->m_MD & 0x01) != 0);
+    p_CPU->m_Flags.m_N = false;
+    p_CPU->m_Flags.m_H = false;
+
+    return true;
+}
+
+// 0x66X0 RL X
+// 0x670Y RL [Y]
+static bool TM_Execute_RL (TM_CPU* p_CPU)
+{
+    // Shift the value in the memory data register left by one bit. Store the result.
+    uint32_t l_Result = (p_CPU->m_MD << 1) | p_CPU->m_Flags.m_C;
+
+    // If the destination address flag is set, then write the result back to the bus at the address
+    // in the memory address register.
+    //
+    // Otherwise, write the result back to the destination register.
+    if (p_CPU->m_DA == true)
+    {
+        TM_WriteByte(p_CPU, p_CPU->m_MA, l_Result & 0xFF);
+        TM_CycleCPU(p_CPU, 1);
+        if (p_CPU->m_EC != TM_EC_OK)
+        {
+            return false;
+        }
+    }
+    else
+    {
+        TM_SetRegister(p_CPU, p_CPU->m_IP1, l_Result);
+    }
+
+    // Set the flags register based on either the size of the destination register or whether the
+    // destination address flag is set.
+    if (p_CPU->m_DA == true || (p_CPU->m_IP1 & 0b11) >= 2)
+    {
+        p_CPU->m_Flags.m_C = ((p_CPU->m_MD & 0x80) != 0);
+        p_CPU->m_Flags.m_Z = ((l_Result & 0xFF) == 0);
+    }
+    else if ((p_CPU->m_IP1 & 0b11) == 0b01)
+    {
+        p_CPU->m_Flags.m_C = ((p_CPU->m_MD & 0x8000) != 0);
+        p_CPU->m_Flags.m_Z = ((l_Result & 0xFFFF) == 0);
+    }
+    else
+    {
+        p_CPU->m_Flags.m_C = ((p_CPU->m_MD & 0x80000000) != 0);
+        p_CPU->m_Flags.m_Z = (l_Result == 0);
+    }
+
+    // Clear the negative and half-carry flags.
+    p_CPU->m_Flags.m_N = false;
+    p_CPU->m_Flags.m_H = false;
+
+    return true;
+}
+
+// 0x68X0 RLC X
+// 0x690Y RLC [Y]
+static bool TM_Execute_RLC (TM_CPU* p_CPU)
+{
+    // Shift the value in the memory data register left by one bit. Store the result.
+    uint32_t l_Result = (p_CPU->m_MD << 1);
+
+    // If the destination address flag is set, then write the result back to the bus at the address
+    // in the memory address register.
+    //
+    // Otherwise, write the result back to the destination register.
+    if (p_CPU->m_DA == true)
+    {
+        // Before writing the result, make sure bit 7 is set to bit 7 of the original value.
+        l_Result |= (p_CPU->m_MD & 0x80);
+
+        TM_WriteByte(p_CPU, p_CPU->m_MA, l_Result & 0xFF);
+        TM_CycleCPU(p_CPU, 1);
+        if (p_CPU->m_EC != TM_EC_OK)
+        {
+            return false;
+        }
+    }
+    else
+    {
+        // Before writing the result, based on the size of the destination register, make sure either
+        // bit 7, 15 or 31 is set to the original value's leftmost bit.
+        if ((p_CPU->m_IP1 & 0b11) >= 2)
+        {
+            l_Result |= (p_CPU->m_MD & 0x80);
+        }
+        else if ((p_CPU->m_IP1 & 0b11) == 0b01)
+        {
+            l_Result |= (p_CPU->m_MD & 0x8000);
+        }
+        else
+        {
+            l_Result |= (p_CPU->m_MD & 0x80000000);
+        }
+
+        TM_SetRegister(p_CPU, p_CPU->m_IP1, l_Result);
+    }
+
+    // Set the flags register based on either the size of the destination register or whether the
+    // destination address flag is set.
+    if (p_CPU->m_DA == true || (p_CPU->m_IP1 & 0b11) >= 2)
+    {
+        p_CPU->m_Flags.m_C = ((p_CPU->m_MD & 0x80) != 0);
+        p_CPU->m_Flags.m_Z = ((l_Result & 0xFF) == 0);
+    }
+    else if ((p_CPU->m_IP1 & 0b11) == 0b01)
+    {
+        p_CPU->m_Flags.m_C = ((p_CPU->m_MD & 0x8000) != 0);
+        p_CPU->m_Flags.m_Z = ((l_Result & 0xFFFF) == 0);
+    }
+    else
+    {
+        p_CPU->m_Flags.m_C = ((p_CPU->m_MD & 0x80000000) != 0);
+        p_CPU->m_Flags.m_Z = (l_Result == 0);
+    }
+
+    // Clear the negative and half-carry flags.
+    p_CPU->m_Flags.m_N = false;
+    p_CPU->m_Flags.m_H = false;
+
+    return true;
+}
+
+// 0x6AX0 RR X
+// 0x6B0Y RR [Y]
+static bool TM_Execute_RR (TM_CPU* p_CPU)
+{
+    // Shift the value in the memory data register right by one bit. Store the result.
+    uint32_t l_Result = (p_CPU->m_MD >> 1);
+
+    // If the destination address flag is set, then write the result back to the bus at the address
+    // in the memory address register.
+    //
+    // Otherwise, write the result back to the destination register.
+    if (p_CPU->m_DA == true)
+    {
+        // Before writing the result, make sure bit 7 is set to the old carry flag.
+        l_Result |= (p_CPU->m_Flags.m_C << 7);
+
+        TM_WriteByte(p_CPU, p_CPU->m_MA, l_Result & 0xFF);
+        TM_CycleCPU(p_CPU, 1);
+        if (p_CPU->m_EC != TM_EC_OK)
+        {
+            return false;
+        }
+    }
+    else
+    {
+        // Before writing the result, based on the size of the destination register, make sure either
+        // bit 7, 15 or 31 is set to the old carry flag.
+        if ((p_CPU->m_IP1 & 0b11) >= 2)
+        {
+            l_Result |= (p_CPU->m_Flags.m_C << 7);
+        }
+        else if ((p_CPU->m_IP1 & 0b11) == 0b01)
+        {
+            l_Result |= (p_CPU->m_Flags.m_C << 15);
+        }
+        else
+        {
+            l_Result |= (p_CPU->m_Flags.m_C << 31);
+        }
+
+        TM_SetRegister(p_CPU, p_CPU->m_IP1, l_Result);
+    }
+
+    // Set the flags register based on either the size of the destination register or whether the
+    // destination address flag is set.
+    if (p_CPU->m_DA == true || (p_CPU->m_IP1 & 0b11) >= 2)
+    {
+        p_CPU->m_Flags.m_Z = ((l_Result & 0xFF) == 0);
+    }
+    else if ((p_CPU->m_IP1 & 0b11) == 0b01)
+    {
+        p_CPU->m_Flags.m_Z = ((l_Result & 0xFFFF) == 0);
+    }
+    else
+    {
+        p_CPU->m_Flags.m_Z = (l_Result == 0);
+    }
+
+    // Set the carry flag and clear the negative and half-carry flags.
+    p_CPU->m_Flags.m_C = ((p_CPU->m_MD & 0x01) != 0);
+    p_CPU->m_Flags.m_N = false;
+    p_CPU->m_Flags.m_H = false;
+
+    return true;
+}
+
+// 0x6CX0 RRC X
+// 0x6D0Y RRC [Y]
+static bool TM_Execute_RRC (TM_CPU* p_CPU)
+{
+    // Shift the value in the memory data register right by one bit. Store the result.
+    uint32_t l_Result = (p_CPU->m_MD >> 1);
+
+    // If the destination address flag is set, then write the result back to the bus at the address
+    // in the memory address register.
+    //
+    // Otherwise, write the result back to the destination register.
+    if (p_CPU->m_DA == true)
+    {
+        // Before writing the result, make sure bit 7 is set to the old carry flag.
+        l_Result |= (p_CPU->m_Flags.m_C << 7);
+
+        TM_WriteByte(p_CPU, p_CPU->m_MA, l_Result & 0xFF);
+        TM_CycleCPU(p_CPU, 1);
+        if (p_CPU->m_EC != TM_EC_OK)
+        {
+            return false;
+        }
+    }
+    else
+    {
+        // Before writing the result, based on the size of the destination register, make sure either
+        // bit 7, 15 or 31 is set to the old carry flag.
+        if ((p_CPU->m_IP1 & 0b11) >= 2)
+        {
+            l_Result |= (p_CPU->m_Flags.m_C << 7);
+        }
+        else if ((p_CPU->m_IP1 & 0b11) == 0b01)
+        {
+            l_Result |= (p_CPU->m_Flags.m_C << 15);
+        }
+        else
+        {
+            l_Result |= (p_CPU->m_Flags.m_C << 31);
+        }
+
+        TM_SetRegister(p_CPU, p_CPU->m_IP1, l_Result);
+    }
+
+    // Set the flags register based on either the size of the destination register or whether the
+    // destination address flag is set.
+    if (p_CPU->m_DA == true || (p_CPU->m_IP1 & 0b11) >= 2)
+    {
+        p_CPU->m_Flags.m_Z = ((l_Result & 0xFF) == 0);
+    }
+    else if ((p_CPU->m_IP1 & 0b11) == 0b01)
+    {
+        p_CPU->m_Flags.m_Z = ((l_Result & 0xFFFF) == 0);
+    }
+    else
+    {
+        p_CPU->m_Flags.m_Z = (l_Result == 0);
+    }
+
+    // Set the carry flag and clear the negative and half-carry flags.
+    p_CPU->m_Flags.m_C = ((p_CPU->m_MD & 0x01) != 0);
+    p_CPU->m_Flags.m_N = false;
+    p_CPU->m_Flags.m_H = false;
+
+    return true;
+}
+
+// 0x700Y BIT IMM8, Y
+// 0x710Y BIT IMM8, [Y]
+static bool TM_Execute_BIT (TM_CPU* p_CPU)
+{
+    // The number of the bit to test needs to be read from immediate memory.
+    uint8_t l_Bit = TM_ReadByte(p_CPU, p_CPU->m_PC);
+    TM_AdvanceCPU(p_CPU, 1);
+
+    // Correct the bit number based on the following:
+    // - If the destination address flag is set, then the range is 0-7.
+    // - Otherwise, the range depends on the size of the destination register.
+    if (p_CPU->m_DA == true || (p_CPU->m_IP1 & 0b11) >= 2)
+    {
+        l_Bit &= 0x07;
+    }
+    else if ((p_CPU->m_IP1 & 0b11) == 0b01)
+    {
+        l_Bit &= 0x0F;
+    }
+    else
+    {
+        l_Bit &= 0x1F;
+    }
+
+    // The value to be tested is in the memory data register.
+    uint32_t l_Value = p_CPU->m_MD;
+
+    // If the bit is set, then set the zero flag. Otherwise, clear the zero flag.
+    p_CPU->m_Flags.m_Z = ((l_Value & (1 << l_Bit)) != 0);
+
+    // Clear the negative flag and set the half-carry flag.
+    p_CPU->m_Flags.m_N = false;
+    p_CPU->m_Flags.m_H = true;
+
+    return true;
+}
+
+// 0x72X0 SET IMM8, X
+// 0x73X0 SET IMM8, [Y]
+static bool TM_Execute_SET (TM_CPU* p_CPU)
+{
+    // The number of the bit to set needs to be read from immediate memory.
+    uint8_t l_Bit = TM_ReadByte(p_CPU, p_CPU->m_PC);
+    TM_AdvanceCPU(p_CPU, 1);
+
+    // Correct the bit number based on the following:
+    // - If the destination address flag is set, then the range is 0-7.
+    // - Otherwise, the range depends on the size of the destination register.
+    if (p_CPU->m_DA == true || (p_CPU->m_IP1 & 0b11) >= 2)
+    {
+        l_Bit &= 0x07;
+    }
+    else if ((p_CPU->m_IP1 & 0b11) == 0b01)
+    {
+        l_Bit &= 0x0F;
+    }
+    else
+    {
+        l_Bit &= 0x1F;
+    }
+
+    // The value to be set is in the memory data register.
+    uint32_t l_Value = p_CPU->m_MD;
+
+    // Set the bit in the value.
+    l_Value |= (1 << l_Bit);
+
+    // If the destination address flag is set, then write the result back to the bus at the address
+    // in the memory address register.
+    //
+    // Otherwise, write the result back to the destination register.
+    if (p_CPU->m_DA == true)
+    {
+        TM_WriteByte(p_CPU, p_CPU->m_MA, l_Value & 0xFF);
+        TM_CycleCPU(p_CPU, 1);
+        if (p_CPU->m_EC != TM_EC_OK)
+        {
+            return false;
+        }
+    }
+    else
+    {
+        TM_SetRegister(p_CPU, p_CPU->m_IP1, l_Value);
+    }
+
+    return true;
+}
+
+// 0x74X0 RES IMM8, X
+// 0x750Y RES IMM8, [Y]
+static bool TM_Execute_RES (TM_CPU* p_CPU)
+{
+    // The number of the bit to reset needs to be read from immediate memory.
+    uint8_t l_Bit = TM_ReadByte(p_CPU, p_CPU->m_PC);
+    TM_AdvanceCPU(p_CPU, 1);
+
+    // Correct the bit number based on the following:
+    // - If the destination address flag is set, then the range is 0-7.
+    // - Otherwise, the range depends on the size of the destination register.
+    if (p_CPU->m_DA == true || (p_CPU->m_IP1 & 0b11) >= 2)
+    {
+        l_Bit &= 0x07;
+    }
+    else if ((p_CPU->m_IP1 & 0b11) == 0b01)
+    {
+        l_Bit &= 0x0F;
+    }
+    else
+    {
+        l_Bit &= 0x1F;
+    }
+
+    // The value to be reset is in the memory data register.
+    uint32_t l_Value = p_CPU->m_MD;
+
+    // Reset the bit in the value.
+    l_Value &= ~(1 << l_Bit);
+
+    // If the destination address flag is set, then write the result back to the bus at the address
+    // in the memory address register.
+    //
+    // Otherwise, write the result back to the destination register.
+    if (p_CPU->m_DA == true)
+    {
+        TM_WriteByte(p_CPU, p_CPU->m_MA, l_Value & 0xFF);
+        TM_CycleCPU(p_CPU, 1);
+        if (p_CPU->m_EC != TM_EC_OK)
+        {
+            return false;
+        }
+    }
+    else
+    {
+        TM_SetRegister(p_CPU, p_CPU->m_IP1, l_Value);
+    }
+
+    return true;
+}
+
+// 0x76X0 SWAP X
+// 0x770Y SWAP [Y]
+static bool TM_Execute_SWAP (TM_CPU* p_CPU)
+{
+    // The value to be swapped is in the memory data register.
+    uint32_t l_Value = p_CPU->m_MD;
+
+    // If the destination address flag is set, then a byte value is being swapped.
+    // Otherwise, the size of the value being swapped depends on the size of the destination
+    // register.
+    if (p_CPU->m_DA == true || (p_CPU->m_IP1 & 0b11) >= 2)
+    {
+        // Swap the lower and upper nibbles of the byte value.
+        l_Value = ((l_Value & 0x0F) << 4) | ((l_Value & 0xF0) >> 4);
+    }
+    else if ((p_CPU->m_IP1 & 0b11) == 0b01)
+    {
+        // Swap the lower and upper bytes of the word value.
+        l_Value = ((l_Value & 0x00FF) << 8) | ((l_Value & 0xFF00) >> 8);
+    }
+    else
+    {
+        // Swap the lower and upper halves of the double word value.
+        l_Value = ((l_Value & 0x0000FFFF) << 16) | ((l_Value & 0xFFFF0000) >> 16);
+    }
+
+    // If the destination address flag is set, then write the result back to the bus at the address
+    // in the memory address register.
+    //
+    // Otherwise, write the result back to the destination register.
+    if (p_CPU->m_DA == true)
+    {
+        TM_WriteByte(p_CPU, p_CPU->m_MA, l_Value & 0xFF);
+        TM_CycleCPU(p_CPU, 1);
+        if (p_CPU->m_EC != TM_EC_OK)
+        {
+            return false;
+        }
+    }
+    else
+    {
+        TM_SetRegister(p_CPU, p_CPU->m_IP1, l_Value);
+    }
+
+    // Set the flags register based on either the size of the destination register or whether the
+    // destination address flag is set.
+    if (p_CPU->m_DA == true || (p_CPU->m_IP1 & 0b11) >= 2)
+    {
+        p_CPU->m_Flags.m_Z = ((l_Value & 0xFF) == 0);
+    }
+    else if ((p_CPU->m_IP1 & 0b11) == 0b01)
+    {
+        p_CPU->m_Flags.m_Z = ((l_Value & 0xFFFF) == 0);
+    }
+    else
+    {
+        p_CPU->m_Flags.m_Z = (l_Value == 0);
+    }
+
+    // Set the negative flag and clear the carry flag.
+    p_CPU->m_Flags.m_N = true;
+    p_CPU->m_Flags.m_C = false;
+
+    return true;
 }
 
 // Public Functions ////////////////////////////////////////////////////////////////////////////////
@@ -408,7 +2587,7 @@ void TM_StepCPU (TM_CPU* p_CPU)
         // Copy the program counter to the instruction address register. Make sure the address is
         // within the executable bounds of the CPU's memory map.
         p_CPU->m_IA = p_CPU->m_PC;
-        if (TM_IsExecutable(p_CPU, p_CPU->m_IA) == false)
+        if (TM_IsExecutable(p_CPU->m_IA) == false)
         {
             TM_SetErrorCode(p_CPU, TM_EC_BAD_EXECUTE);
             p_CPU->m_EA = p_CPU->m_IA;
@@ -429,6 +2608,92 @@ void TM_StepCPU (TM_CPU* p_CPU)
         bool l_Good = false;
         switch (p_CPU->m_OC)
         {
+            case 0x00: l_Good = TM_Execute_NOP(p_CPU); break;
+            case 0x01: l_Good = TM_Execute_STOP(p_CPU); break;
+            case 0x02: l_Good = TM_Execute_HALT(p_CPU); break;
+            case 0x03: l_Good = TM_Execute_SEC(p_CPU); break;
+            case 0x04: l_Good = TM_Execute_CEC(p_CPU); break;
+            case 0x05: l_Good = TM_Execute_DI(p_CPU); break; 
+            case 0x06: l_Good = TM_Execute_EI(p_CPU); break;
+            case 0x07: l_Good = TM_Execute_DAA(p_CPU); break;
+            case 0x08: l_Good = TM_Execute_SCF(p_CPU); break;
+            case 0x09: l_Good = TM_Execute_CCF(p_CPU); break;
+            case 0x10: l_Good = TM_Fetch_REG_IMM(p_CPU) && TM_Execute_LD(p_CPU); break;
+            case 0x11: l_Good = TM_Fetch_REG_ADDR32(p_CPU) && TM_Execute_LD(p_CPU); break;
+            case 0x12: l_Good = TM_Fetch_REG_REGPTR32(p_CPU) && TM_Execute_LD(p_CPU); break;
+            case 0x13: l_Good = TM_Fetch_REG_ADDR16(p_CPU) && TM_Execute_LD(p_CPU); break;
+            case 0x14: l_Good = TM_Fetch_REG_REGPTR16(p_CPU) && TM_Execute_LD(p_CPU); break;
+            case 0x15: l_Good = TM_Fetch_REG_ADDR8(p_CPU) && TM_Execute_LD(p_CPU); break;
+            case 0x16: l_Good = TM_Fetch_REG_REGPTR8(p_CPU) && TM_Execute_LD(p_CPU); break;
+            case 0x17: l_Good = TM_Fetch_ADDR32_REG(p_CPU) && TM_Execute_ST(p_CPU); break;
+            case 0x18: l_Good = TM_Fetch_REGPTR32_REG(p_CPU) && TM_Execute_ST(p_CPU); break;
+            case 0x19: l_Good = TM_Fetch_ADDR16_REG(p_CPU) && TM_Execute_ST(p_CPU); break;
+            case 0x1A: l_Good = TM_Fetch_REGPTR16_REG(p_CPU) && TM_Execute_ST(p_CPU); break;
+            case 0x1B: l_Good = TM_Fetch_ADDR8_REG(p_CPU) && TM_Execute_ST(p_CPU); break;
+            case 0x1C: l_Good = TM_Fetch_REGPTR8_REG(p_CPU) && TM_Execute_ST(p_CPU); break;
+            case 0x1D: l_Good = TM_Execute_MV(p_CPU); break;
+            case 0x1E: l_Good = TM_Execute_PUSH(p_CPU); break;
+            case 0x1F: l_Good = TM_Execute_POP(p_CPU); break;
+            case 0x20: l_Good = TM_Fetch_NULL_IMM(p_CPU) && TM_Execute_JMP(p_CPU); break;
+            case 0x21: l_Good = TM_Fetch_REG_NULL(p_CPU) && TM_Execute_JMP(p_CPU); break;
+            case 0x22: l_Good = TM_Fetch_NULL_SIMM16(p_CPU) && TM_Execute_JPB(p_CPU); break;
+            case 0x23: l_Good = TM_Fetch_NULL_IMM(p_CPU) && TM_Execute_CALL(p_CPU); break;
+            case 0x24: l_Good = TM_Execute_RST(p_CPU); break;
+            case 0x25: l_Good = TM_Execute_RET(p_CPU); break;
+            case 0x26: l_Good = TM_Execute_RETI(p_CPU); break;
+            case 0x27: l_Good = TM_Execute_JPS(p_CPU); break;
+            case 0x30: l_Good = TM_Fetch_REG_NULL(p_CPU) && TM_Execute_INC(p_CPU); break;
+            case 0x31: l_Good = TM_Fetch_REGPTR32_NULL(p_CPU) && TM_Execute_INC(p_CPU); break;
+            case 0x32: l_Good = TM_Fetch_REG_NULL(p_CPU) && TM_Execute_DEC(p_CPU); break;
+            case 0x33: l_Good = TM_Fetch_REGPTR32_NULL(p_CPU) && TM_Execute_DEC(p_CPU); break;
+            case 0x34: l_Good = TM_Fetch_REG_IMM(p_CPU) && TM_Execute_ADD(p_CPU, false); break;
+            case 0x35: l_Good = TM_Fetch_REG_REG(p_CPU) && TM_Execute_ADD(p_CPU, false); break;
+            case 0x36: l_Good = TM_Fetch_REG_REGPTR32(p_CPU) && TM_Execute_ADD(p_CPU, false); break;
+            case 0x37: l_Good = TM_Fetch_REG_IMM(p_CPU) && TM_Execute_ADD(p_CPU, true); break;
+            case 0x38: l_Good = TM_Fetch_REG_REG(p_CPU) && TM_Execute_ADD(p_CPU, true); break;
+            case 0x39: l_Good = TM_Fetch_REG_REGPTR32(p_CPU) && TM_Execute_ADD(p_CPU, true); break;
+            case 0x3A: l_Good = TM_Fetch_REG_IMM(p_CPU) && TM_Execute_SUB(p_CPU, false); break;
+            case 0x3B: l_Good = TM_Fetch_REG_REG(p_CPU) && TM_Execute_SUB(p_CPU, false); break;
+            case 0x3C: l_Good = TM_Fetch_REG_REGPTR32(p_CPU) && TM_Execute_SUB(p_CPU, false); break;
+            case 0x3D: l_Good = TM_Fetch_REG_IMM(p_CPU) && TM_Execute_SUB(p_CPU, true); break;
+            case 0x3E: l_Good = TM_Fetch_REG_REG(p_CPU) && TM_Execute_SUB(p_CPU, true); break;
+            case 0x3F: l_Good = TM_Fetch_REG_REGPTR32(p_CPU) && TM_Execute_SUB(p_CPU, true); break;
+            case 0x40: l_Good = TM_Fetch_REG_IMM(p_CPU) && TM_Execute_AND(p_CPU); break;
+            case 0x41: l_Good = TM_Fetch_REG_REG(p_CPU) && TM_Execute_AND(p_CPU); break;
+            case 0x42: l_Good = TM_Fetch_REG_REGPTR32(p_CPU) && TM_Execute_AND(p_CPU); break;
+            case 0x43: l_Good = TM_Fetch_REG_IMM(p_CPU) && TM_Execute_OR(p_CPU); break;
+            case 0x44: l_Good = TM_Fetch_REG_REG(p_CPU) && TM_Execute_OR(p_CPU); break;
+            case 0x45: l_Good = TM_Fetch_REG_REGPTR32(p_CPU) && TM_Execute_OR(p_CPU); break;
+            case 0x46: l_Good = TM_Fetch_REG_IMM(p_CPU) && TM_Execute_XOR(p_CPU); break;
+            case 0x47: l_Good = TM_Fetch_REG_REG(p_CPU) && TM_Execute_XOR(p_CPU); break;
+            case 0x48: l_Good = TM_Fetch_REG_REGPTR32(p_CPU) && TM_Execute_XOR(p_CPU); break;
+            case 0x49: l_Good = TM_Fetch_REG_NULL(p_CPU) && TM_Execute_NOT(p_CPU); break;
+            case 0x4A: l_Good = TM_Fetch_REGPTR32_NULL(p_CPU) && TM_Execute_NOT(p_CPU); break;
+            case 0x50: l_Good = TM_Fetch_REG_IMM(p_CPU) && TM_Execute_CMP(p_CPU); break;
+            case 0x51: l_Good = TM_Fetch_REG_REG(p_CPU) && TM_Execute_CMP(p_CPU); break;
+            case 0x52: l_Good = TM_Fetch_REG_REGPTR32(p_CPU) && TM_Execute_CMP(p_CPU); break;
+            case 0x60: l_Good = TM_Fetch_REG_NULL(p_CPU) && TM_Execute_SLA(p_CPU); break;
+            case 0x61: l_Good = TM_Fetch_REGPTR32_NULL(p_CPU) && TM_Execute_SLA(p_CPU); break;
+            case 0x62: l_Good = TM_Fetch_REG_NULL(p_CPU) && TM_Execute_SRA(p_CPU); break;
+            case 0x63: l_Good = TM_Fetch_REGPTR32_NULL(p_CPU) && TM_Execute_SRA(p_CPU); break;
+            case 0x64: l_Good = TM_Fetch_REG_NULL(p_CPU) && TM_Execute_SRL(p_CPU); break;
+            case 0x65: l_Good = TM_Fetch_REGPTR32_NULL(p_CPU) && TM_Execute_SRL(p_CPU); break;
+            case 0x66: l_Good = TM_Fetch_REG_NULL(p_CPU) && TM_Execute_RL(p_CPU); break; 
+            case 0x67: l_Good = TM_Fetch_REGPTR32_NULL(p_CPU) && TM_Execute_RL(p_CPU); break;
+            case 0x68: l_Good = TM_Fetch_REG_NULL(p_CPU) && TM_Execute_RLC(p_CPU); break;
+            case 0x69: l_Good = TM_Fetch_REGPTR32_NULL(p_CPU) && TM_Execute_RLC(p_CPU); break;
+            case 0x6A: l_Good = TM_Fetch_REG_NULL(p_CPU) && TM_Execute_RR(p_CPU); break;
+            case 0x6B: l_Good = TM_Fetch_REGPTR32_NULL(p_CPU) && TM_Execute_RR(p_CPU); break;
+            case 0x6C: l_Good = TM_Fetch_REG_NULL(p_CPU) && TM_Execute_RRC(p_CPU); break;
+            case 0x6D: l_Good = TM_Fetch_REGPTR32_NULL(p_CPU) && TM_Execute_RRC(p_CPU); break;
+            case 0x70: l_Good = TM_Fetch_REG_NULL(p_CPU) && TM_Execute_BIT(p_CPU); break;
+            case 0x71: l_Good = TM_Fetch_REGPTR32_NULL(p_CPU) && TM_Execute_BIT(p_CPU); break;
+            case 0x72: l_Good = TM_Fetch_REG_NULL(p_CPU) && TM_Execute_SET(p_CPU); break;
+            case 0x73: l_Good = TM_Fetch_REGPTR32_NULL(p_CPU) && TM_Execute_SET(p_CPU); break;
+            case 0x74: l_Good = TM_Fetch_REG_NULL(p_CPU) && TM_Execute_RES(p_CPU); break;
+            case 0x75: l_Good = TM_Fetch_REGPTR32_NULL(p_CPU) && TM_Execute_RES(p_CPU); break;
+            case 0x76: l_Good = TM_Fetch_REG_NULL(p_CPU) && TM_Execute_SWAP(p_CPU); break;
+            case 0x77: l_Good = TM_Fetch_REGPTR32_NULL(p_CPU) && TM_Execute_SWAP(p_CPU); break;
             default:
                 TM_SetErrorCode(p_CPU, TM_EC_INVALID_OPCODE);
                 p_CPU->m_EA = p_CPU->m_IA;
