@@ -69,6 +69,21 @@ TMM_Syntax* TMM_ParsePrimaryExpression ()
     {
         case TMM_TOKEN_KEYWORD:
         {
+            // Check if the keyword is a register or condition.
+            if (TMM_IsRegisterKeyword(l_LeadToken->m_Keyword) == true)
+            {
+                TMM_Syntax* l_RegisterSyntax = TMM_CreateSyntax(TMM_ST_REGISTER, l_LeadToken);
+                l_RegisterSyntax->m_KeywordType = l_LeadToken->m_Keyword->m_Type;
+                return l_RegisterSyntax;
+            }
+
+            else if (TMM_IsConditionKeyword(l_LeadToken->m_Keyword) == true)
+            {
+                TMM_Syntax* l_ConditionSyntax = TMM_CreateSyntax(TMM_ST_CONDITION, l_LeadToken);
+                l_ConditionSyntax->m_KeywordType = l_LeadToken->m_Keyword->m_Type;
+                return l_ConditionSyntax;
+            }
+
             switch (l_LeadToken->m_Keyword->m_Type)
             {
                 case TMM_KT_NARG:
@@ -140,6 +155,54 @@ TMM_Syntax* TMM_ParsePrimaryExpression ()
             return l_IdentifierSyntax;
         }
 
+        case TMM_TOKEN_BRACKET_OPEN:
+        {
+            // Peek the next token. Is it a register?
+            const TMM_Token* l_NextToken = TMM_PeekToken(0);
+            if (
+                l_NextToken->m_Type == TMM_TOKEN_KEYWORD &&
+                TMM_IsRegisterKeyword(l_NextToken->m_Keyword) == true
+            )
+            {
+                // Store and consume the register token.
+                const TMM_Token* l_RegisterToken = TMM_AdvanceToken();
+
+                // Create the register pointer syntax node.
+                TMM_Syntax* l_RegisterPointerSyntax = TMM_CreateSyntax(TMM_ST_REGPTR, l_RegisterToken);
+                l_RegisterPointerSyntax->m_KeywordType = l_RegisterToken->m_Keyword->m_Type;
+
+                // Check for a closing bracket.
+                if (TMM_AdvanceTokenIfType(TMM_TOKEN_BRACKET_CLOSE) == NULL)
+                {
+                    TM_error("Expected a closing bracket after a register pointer.");
+                    TMM_DestroySyntax(l_RegisterPointerSyntax);
+                    return NULL;
+                }
+
+                return l_RegisterPointerSyntax;
+            }
+
+            // Otherwise, parse the expression inside the brackets.
+            TMM_Syntax* l_ExpressionSyntax = TMM_ParseExpression();
+            if (l_ExpressionSyntax == NULL)
+            {
+                return NULL;
+            }
+
+            // Check for a closing bracket.
+            if (TMM_AdvanceTokenIfType(TMM_TOKEN_BRACKET_CLOSE) == NULL)
+            {
+                TM_error("Expected a closing bracket after a bracket-enclosed expression.");
+                TMM_DestroySyntax(l_ExpressionSyntax);
+                return NULL;
+            }
+
+            // Create an address syntax node; store the expression in its left expression.
+            TMM_Syntax* l_AddressSyntax = TMM_CreateSyntax(TMM_ST_ADDRESS, l_LeadToken);
+            l_AddressSyntax->m_LeftExpr = l_ExpressionSyntax;
+            return l_AddressSyntax;
+        }
+
         case TMM_TOKEN_PARENTHESIS_OPEN:
         {
             TMM_Syntax* l_ExpressionSyntax = TMM_ParseExpression();
@@ -150,7 +213,7 @@ TMM_Syntax* TMM_ParsePrimaryExpression ()
 
             if (TMM_AdvanceTokenIfType(TMM_TOKEN_PARENTHESIS_CLOSE) == NULL)
             {
-                TM_error("Expected a closing parenthesis after an expression.");
+                TM_error("Expected a closing parenthesis after a parenthesis-enclosed expression.");
                 TMM_DestroySyntax(l_ExpressionSyntax);
                 return NULL;
             }
@@ -1283,6 +1346,101 @@ TMM_Syntax* TMM_ParseAssertStatement ()
     return l_AssertSyntax;
 }
 
+TMM_Syntax* TMM_ParseOrgStatement ()
+{
+    // Collect and advance past the `org` token.
+    const TMM_Token* l_OrgToken = TMM_AdvanceToken();
+    if (l_OrgToken->m_Type != TMM_TOKEN_KEYWORD)
+    {
+        TM_error("Expected a keyword token in an org statement.");
+        return NULL;
+    }
+
+    // Get the keyword. Make sure it's ROM or RAM.
+    const TMM_Keyword* l_Keyword = l_OrgToken->m_Keyword;
+    if (l_Keyword->m_Type != TMM_KT_ROM && l_Keyword->m_Type != TMM_KT_RAM)
+    {
+        TM_error("Expected a ROM or RAM keyword in an org statement.");
+        return NULL;
+    }
+
+    // If there is a comma token, then parse the expression after it.
+    TMM_Syntax* l_OrgExpr = NULL;
+    if (TMM_AdvanceTokenIfType(TMM_TOKEN_COMMA) != NULL)
+    {
+        l_OrgExpr = TMM_ParseExpression();
+        if (l_OrgExpr == NULL)
+        {
+            return NULL;
+        }
+    }
+
+    // For `org` statements pointing to RAM, the org expression is mandatory.
+    else if (l_Keyword->m_Type == TMM_KT_RAM)
+    {
+        TM_error("Expected a comma token after the RAM keyword in an org statement.");
+        return NULL;
+    }
+
+    // Create the org syntax node.
+    TMM_Syntax* l_OrgSyntax = TMM_CreateSyntax(TMM_ST_ORG, l_OrgToken);
+    l_OrgSyntax->m_KeywordType = l_Keyword->m_Type;
+    l_OrgSyntax->m_LeftExpr = l_OrgExpr;
+
+    return l_OrgSyntax;
+}
+
+TMM_Syntax* TMM_ParseInstructionStatement (const TMM_Keyword* p_Keyword)
+{
+    // Create the instruction syntax node.
+    TMM_Syntax* l_InstructionSyntax = TMM_CreateSyntax(TMM_ST_INSTRUCTION, s_Parser.m_LeadToken);
+    l_InstructionSyntax->m_KeywordType = p_Keyword->m_Type;
+
+    // The number of operands needed by the instruction is stored in the keyword's parameter.
+    // Instructions can have 0, 1 or 2 operands.
+    int l_OperandCount = p_Keyword->m_Param;
+
+    // If the instruction has 0 operands, then return the instruction syntax node.
+    if (l_OperandCount == 0)
+    {
+        return l_InstructionSyntax;
+    }
+
+    // If the instruction has at least one operand, then parse the first operand.
+    TMM_Syntax* l_FirstOperand = TMM_ParseExpression();
+    if (l_FirstOperand == NULL)
+    {
+        TMM_DestroySyntax(l_InstructionSyntax);
+        return NULL;
+    }
+    l_InstructionSyntax->m_LeftExpr = l_FirstOperand;
+
+    // If the instruction has only one operand, then return the instruction syntax node.
+    if (l_OperandCount == 1)
+    {
+        return l_InstructionSyntax;
+    }
+
+    // Expect a comma token after the first operand.
+    if (TMM_AdvanceTokenIfType(TMM_TOKEN_COMMA) == NULL)
+    {
+        TM_error("Expected a comma token after the first operand in a two-operand instruction statement.");
+        TMM_DestroySyntax(l_InstructionSyntax);
+        return NULL;
+    }
+
+    // Parse the second operand.
+    TMM_Syntax* l_SecondOperand = TMM_ParseExpression();
+    if (l_SecondOperand == NULL)
+    {
+        TMM_DestroySyntax(l_InstructionSyntax);
+        return NULL;
+    }
+    l_InstructionSyntax->m_RightExpr = l_SecondOperand;
+
+    return l_InstructionSyntax;
+}
+
 TMM_Syntax* TMM_ParseStatement ()
 {
     // Skip any newline tokens.
@@ -1356,6 +1514,16 @@ TMM_Syntax* TMM_ParseStatement ()
         else if (l_KeywordToken->m_Keyword->m_Type == TMM_KT_ASSERT)
         {
             return TMM_ParseAssertStatement();
+        }
+
+        else if (l_KeywordToken->m_Keyword->m_Type == TMM_KT_ORG)
+        {
+            return TMM_ParseOrgStatement();
+        }
+
+        else if (l_KeywordToken->m_Keyword->m_Type >= TMM_KT_NOP)
+        {
+            return TMM_ParseInstructionStatement(l_KeywordToken->m_Keyword);
         }
 
         else

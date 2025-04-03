@@ -129,9 +129,8 @@
 #define TM_INT_BEGIN            0x00002000
 #define TM_INT_END              0x00002FFF
 #define TM_CODE_BEGIN           0x00003000
-#define TM_CODE_END             0x3FFFFFFF
-#define TM_DATA_BEGIN           0x40000000
-#define TM_DATA_END             0x7FFFFFFF
+#define TM_CODE_END             0x7FFFFFFF
+#define TM_CODE_SIZE            (TM_CODE_END - TM_CODE_BEGIN + 1)
 #define TM_ROM_END              0x7FFFFFFF
 
 #define TM_RAM_BEGIN            0x80000000
@@ -200,10 +199,10 @@ typedef enum TM_CPURegister
     TM_REG_CH = 0b1010,
     TM_REG_CL = 0b1011,
 
-    TM_REG_D  = 0b1100,
-    TM_REG_DW = 0b1101,
-    TM_REG_DH = 0b1110,
-    TM_REG_DL = 0b1111,
+    TM_REG_E  = 0b1100,
+    TM_REG_EW = 0b1101,
+    TM_REG_EH = 0b1110,
+    TM_REG_EL = 0b1111,
 } TM_CPURegister;
 
 // CPU Flag Enumeration ////////////////////////////////////////////////////////////////////////////
@@ -242,11 +241,11 @@ typedef enum TM_CPUFlag
  */
 typedef enum TM_CPUCondition
 {
-    TM_COND_NONE = 0, ///< @brief No condition, used to indicate that the CPU should execute the next instruction.
-    TM_COND_Z    = 1, ///< @brief The zero condition, used to indicate that the CPU should execute the next instruction if the zero flag is set.
-    TM_COND_NZ   = 2, ///< @brief The not zero condition, used to indicate that the CPU should execute the next instruction if the zero flag is not set.
-    TM_COND_C    = 3, ///< @brief The carry condition, used to indicate that the CPU should execute the next instruction if the carry flag is set.
-    TM_COND_NC   = 4, ///< @brief The not carry condition, used to indicate that the CPU should execute the next instruction if the carry flag is not set.
+    TM_COND_NC   = 0, ///< @brief No condition, used to indicate that the CPU should execute the next instruction.
+    TM_COND_ZS   = 1, ///< @brief The zero condition, used to indicate that the CPU should execute the next instruction if the zero flag is set.
+    TM_COND_ZC   = 2, ///< @brief The not zero condition, used to indicate that the CPU should execute the next instruction if the zero flag is not set.
+    TM_COND_CS   = 3, ///< @brief The carry condition, used to indicate that the CPU should execute the next instruction if the carry flag is set.
+    TM_COND_CC   = 4, ///< @brief The not carry condition, used to indicate that the CPU should execute the next instruction if the carry flag is not set.
 } TM_CPUCondition;
 
 // CPU Instruction Enumeration /////////////////////////////////////////////////////////////////////

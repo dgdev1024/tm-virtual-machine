@@ -29,12 +29,18 @@ typedef enum TMM_SyntaxType
     TMM_ST_INCLUDE,                 ///< @brief Include Statement (eg. `include "file.asm"`).
     TMM_ST_INCBIN,                  ///< @brief Include Binary Statement (eg. `incbin "file.bin"`).
     TMM_ST_ASSERT,                  ///< @brief Assert Statement (eg. `assert x == 0`).
+    TMM_ST_ORG,                     ///< @brief Origin Statement (eg. `org rom`, `org ram, 0x1400`).
+    TMM_ST_INSTRUCTION,             ///< @brief Instruction Statement (eg. `add a, b`, `mv a, b`).
 
     // Expression Nodes
     TMM_ST_BINARY_EXP,              ///< @brief Binary Expression (eg. `1 + 2`, `3 * 4`).
     TMM_ST_UNARY_EXP,               ///< @brief Unary Expression (eg. `-1`, `~2`).
     TMM_ST_NARG,                    ///< @brief Number of Arguments Expression (eg. `_narg`).
     TMM_ST_IDENTIFIER,              ///< @brief Identifier (eg. `x`, `y`).
+    TMM_ST_REGISTER,                ///< @brief Register (eg. `a`, `b`, `c`).
+    TMM_ST_CONDITION,               ///< @brief Execution condition (eg. `nc`, `zs`, `cc`).
+    TMM_ST_ADDRESS,                 ///< @brief Address Literal (eg. `[0x0000]`).
+    TMM_ST_REGPTR,                  ///< @brief Register Pointer (eg. `[a]`, `[b]`).
     TMM_ST_NUMBER,                  ///< @brief Number (eg. `0`, `1`, `2`).
     TMM_ST_ARGUMENT,                ///< @brief Argument Placeholder (eg. `@0`, `@1`).
     TMM_ST_STRING,                  ///< @brief String (eg. `"Hello, World!"`).
@@ -69,6 +75,9 @@ typedef struct TMM_Syntax
 
     // Some nodes may need to keep track of the keyword type of its lead token.
     // - `TMM_ST_DATA` nodes have a keyword type to hold the data type.
+    // - `TMM_ST_INSTRUCTION` nodes have a keyword type to hold the instruction mnemonic.
+    // - `TMM_ST_REGISTER`, `TMM_ST_REGPTR` and `TMM_ST_CONDITION` nodes have a keyword type to hold the register or execution condition type.
+    // - `TMM_ST_ORG` nodes have a keyword type to hold the section type.
     TMM_KeywordType              m_KeywordType;  ///< @brief Keyword Type
 
     // Some nodes have a body of child nodes, such as a block of statements, or a macro definition.
@@ -98,6 +107,9 @@ typedef struct TMM_Syntax
     // - `TMM_ST_ASSERT` nodes contain their false block in the right child node.
     // - `TMM_ST_BINARY_EXP` nodes have a left and right child node.
     // - `TMM_ST_UNARY_EXP` nodes have a right child node.
+    // - `TMM_ST_ORG` nodes hold the origin offset address in the left child node.
+    // - `TMM_ST_ADDRESS` nodes hold the address in the left child node.
+    // - `TMM_ST_INSTRUCTION` nodes hold the instruction operands in the left and right child nodes.
     struct TMM_Syntax*       m_LeftExpr;     ///< @brief Left Expression
     struct TMM_Syntax*       m_RightExpr;    ///< @brief Right Expression
     TMM_TokenType            m_Operator;     ///< @brief Operator Token Type

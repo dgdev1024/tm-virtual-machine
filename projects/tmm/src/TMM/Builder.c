@@ -9,7 +9,7 @@
 // Constants ///////////////////////////////////////////////////////////////////////////////////////
 
 #define TMM_BUILDER_INITIAL_CAPACITY 8
-#define TMM_BUILDER_OUTPUT_CAPACITY 0x4000
+#define TMM_BUILDER_OUTPUT_CAPACITY 0x400
 #define TMM_BUILDER_CALL_STACK_SIZE 32
 
 // Label Structure /////////////////////////////////////////////////////////////////////////////////
@@ -17,10 +17,10 @@
 typedef struct TMM_Label
 {
     char*       m_Name;
-    uint16_t*   m_References;
+    uint32_t*   m_References;
     size_t      m_ReferenceCount;
     size_t      m_ReferenceCapacity;
-    uint16_t    m_Address;
+    uint32_t    m_Address;
     bool        m_Resolved;
 } TMM_Label;
 
@@ -46,7 +46,13 @@ typedef struct TMM_MacroCall
 
 static struct
 {
-    uint8_t         m_Output[TMM_BUILDER_OUTPUT_CAPACITY];
+    uint8_t*        m_Output;
+    size_t          m_OutputSize;
+    size_t          m_OutputCapacity;
+
+    bool            m_CursorInRAM;
+    size_t          m_RAMCursor;
+
     TMM_Value*      m_Result;
 
     TMM_Label*      m_Labels;
@@ -64,10 +70,12 @@ static struct
 
     TMM_MacroCall*  m_MacroCallStack[TMM_BUILDER_CALL_STACK_SIZE];
     size_t          m_MacroCallStackIndex;
-
-    size_t          m_OutputSize;
 } s_Builder = {
-    .m_Output = { 0 },
+    .m_Output = NULL,
+    .m_OutputSize = 0,
+    .m_OutputCapacity = 0,
+    .m_CursorInRAM = false,
+    .m_RAMCursor = 0,
     .m_Result = NULL,
     .m_Labels = NULL,
     .m_LabelCount = 0,
@@ -80,8 +88,7 @@ static struct
     .m_DefineCount = 0,
     .m_DefineCapacity = 0,
     .m_MacroCallStack = { 0 },
-    .m_MacroCallStackIndex = 0,
-    .m_OutputSize = 0
+    .m_MacroCallStackIndex = 0
 };
 
 // Static Function Prototypes //////////////////////////////////////////////////////////////////////
@@ -129,7 +136,7 @@ static void TMM_ResizeLabelReferences (TMM_Label* p_Label)
     if (p_Label->m_ReferenceCount + 1 >= p_Label->m_ReferenceCapacity)
     {
         size_t l_NewCapacity      = p_Label->m_ReferenceCapacity * 2;
-        uint16_t* l_NewReferences = TM_realloc(p_Label->m_References, l_NewCapacity, uint16_t);
+        uint32_t* l_NewReferences = TM_realloc(p_Label->m_References, l_NewCapacity, uint32_t);
         TM_pexpect(l_NewReferences != NULL, "Failed to reallocate memory for label references array");
 
         p_Label->m_References           = l_NewReferences;
@@ -183,11 +190,53 @@ static void TMM_ResizeDefinesArrays ()
 
 // Static Functions - Output Buffer Management /////////////////////////////////////////////////////
 
+static bool TMM_ResizeOutputBuffer (size_t p_WriteSize)
+{
+    size_t l_NewCapacity = s_Builder.m_OutputCapacity;
+    while (s_Builder.m_OutputSize + p_WriteSize >= l_NewCapacity)
+    {
+        l_NewCapacity += (l_NewCapacity * 0.5);
+    }
+
+    if (l_NewCapacity == s_Builder.m_OutputCapacity)
+    {
+        if (l_NewCapacity == TM_CODE_SIZE)
+        {
+            TM_error("Output buffer is at max capacity and cannot be expanded anymore.");
+            return false;
+        }
+
+        return true;
+    }
+    else if (l_NewCapacity > TM_CODE_SIZE)
+    {
+        l_NewCapacity = TM_CODE_SIZE;
+    }
+
+    uint8_t* l_NewOutput = TM_realloc(s_Builder.m_Output, l_NewCapacity, uint8_t);
+    TM_pexpect(l_NewOutput != NULL, "Failed to reallocate memory for the builder's output buffer");
+
+    s_Builder.m_Output = l_NewOutput;
+    s_Builder.m_OutputCapacity = l_NewCapacity;
+    return true;
+}
+
 static bool TMM_DefineByte (uint8_t p_Value)
 {
-    if (s_Builder.m_OutputSize + 1 >= TMM_BUILDER_OUTPUT_CAPACITY)
+    if (s_Builder.m_CursorInRAM == true)
     {
-        TM_error("Output buffer overflowed while defining a byte.");
+        if (s_Builder.m_RAMCursor + p_Value > 0xFFFFFFFF)
+        {
+            TM_error("Attempted to write past the end of the RAM section.");
+            return false;
+        }
+
+        s_Builder.m_RAMCursor += p_Value;
+        return true;
+    }
+
+    if (TMM_ResizeOutputBuffer(1) == false)
+    {
         return false;
     }
 
@@ -197,9 +246,20 @@ static bool TMM_DefineByte (uint8_t p_Value)
 
 static bool TMM_DefineWord (uint16_t p_Value)
 {
-    if (s_Builder.m_OutputSize + 2 >= TMM_BUILDER_OUTPUT_CAPACITY)
+    if (s_Builder.m_CursorInRAM == true)
     {
-        TM_error("Output buffer overflowed while defining a word.");
+        if (s_Builder.m_RAMCursor + (p_Value * 2) > 0xFFFFFFFF)
+        {
+            TM_error("Attempted to write past the end of the RAM section.");
+            return false;
+        }
+
+        s_Builder.m_RAMCursor += (p_Value * 2);
+        return true;
+    }
+
+    if (TMM_ResizeOutputBuffer(2) == false)
+    {
         return false;
     }
 
@@ -210,9 +270,20 @@ static bool TMM_DefineWord (uint16_t p_Value)
 
 static bool TMM_DefineLong (uint32_t p_Value)
 {
-    if (s_Builder.m_OutputSize + 4 >= TMM_BUILDER_OUTPUT_CAPACITY)
+    if (s_Builder.m_CursorInRAM == true)
     {
-        TM_error("Output buffer overflowed while defining a long.");
+        if (s_Builder.m_RAMCursor + (p_Value * 4) > 0xFFFFFFFF)
+        {
+            TM_error("Attempted to write past the end of the RAM section.");
+            return false;
+        }
+
+        s_Builder.m_RAMCursor += (p_Value * 4);
+        return true;
+    }
+
+    if (TMM_ResizeOutputBuffer(4) == false)
+    {
         return false;
     }
 
@@ -223,12 +294,46 @@ static bool TMM_DefineLong (uint32_t p_Value)
     return true;
 }
 
+static bool TMM_DefineIntegerByRegisterType (TMM_KeywordType p_Type, uint32_t p_Value)
+{
+    switch (p_Type)
+    {
+        case TMM_KT_A:
+        case TMM_KT_B:
+        case TMM_KT_C:
+        case TMM_KT_E:
+            return TMM_DefineLong(p_Value);
+        case TMM_KT_AW:
+        case TMM_KT_BW:
+        case TMM_KT_CW:
+        case TMM_KT_EW:
+            return TMM_DefineWord((uint16_t) p_Value);
+        case TMM_KT_AH:
+        case TMM_KT_BH:
+        case TMM_KT_CH:
+        case TMM_KT_EH:
+        case TMM_KT_AL:
+        case TMM_KT_BL:
+        case TMM_KT_CL:
+        case TMM_KT_EL:
+            return TMM_DefineByte((uint8_t) p_Value);
+        default:
+            TM_error("Non-register keyword type provided for integer definition.");
+            return false;
+    }
+}
+
 static bool TMM_DefineStringASCII (const char* p_String)
 {
-    size_t l_Length = strlen(p_String);
-    if (s_Builder.m_OutputSize + l_Length + 1 >= TMM_BUILDER_OUTPUT_CAPACITY)
+    if (s_Builder.m_CursorInRAM == true)
     {
-        TM_error("Output buffer overflowed while defining an ASCII string.");
+        TM_error("String data cannot be defined in the RAM section.");
+        return false;
+    }
+
+    size_t l_Length = strlen(p_String);
+    if (TMM_ResizeOutputBuffer(l_Length + 1) == false)
+    {
         return false;
     }
 
@@ -244,6 +349,19 @@ static bool TMM_DefineStringASCII (const char* p_String)
 
 static bool TMM_DefineBinaryFile (const char* p_Filename, size_t p_Offset, size_t p_Length)
 {
+    if (s_Builder.m_CursorInRAM == true)
+    {
+        TM_error("Binary data cannot be defined in the RAM section.");
+        return false;
+    }
+
+    // Make sure the filename is not blank.
+    if (p_Filename == NULL || p_Filename[0] == '\0')
+    {
+        TM_error("Filename for include binary file is null or blank.");
+        return false;
+    }
+
     // Attempt to open the binary file for reading.
     FILE* l_File = fopen(p_Filename, "rb");
     if (l_File == NULL)
@@ -277,9 +395,8 @@ static bool TMM_DefineBinaryFile (const char* p_Filename, size_t p_Offset, size_
     }
 
     // Ensure the output buffer has enough space for the binary data.
-    if (s_Builder.m_OutputSize + p_Length >= TMM_BUILDER_OUTPUT_CAPACITY)
+    if (TMM_ResizeOutputBuffer(p_Length) == false)
     {
-        TM_error("Output buffer overflowed while including a binary file.");
         fclose(l_File);
         return false;
     }
@@ -582,6 +699,692 @@ static TMM_Value* TMM_PerformUnaryOperation (const TMM_Value* p_Value, TMM_Token
     }
 }
 
+// Static Functions - Instruction Evaluation ///////////////////////////////////////////////////////
+
+static bool TMM_EvaluateInstructionNOP (const TMM_Syntax* p_SyntaxNode)
+{
+    // 0x0000 NOP
+    return TMM_DefineWord(0x0000);
+}
+
+static bool TMM_EvaluateInstructionSTOP (const TMM_Syntax* p_SyntaxNode)
+{
+    // 0x0100 STOP
+    return TMM_DefineWord(0x0100);
+}
+
+static bool TMM_EvaluateInstructionHALT (const TMM_Syntax* p_SyntaxNode)
+{
+    // 0x0200 HALT
+    return TMM_DefineWord(0x0200);
+}
+
+static bool TMM_EvaluateInstructionSEC (const TMM_Syntax* p_SyntaxNode)
+{
+    // 0x03XX SEC XX
+    
+    // Evaluate the left expression. It should be a number.
+    TMM_Value* l_LeftValue = TMM_Evaluate(p_SyntaxNode->m_LeftExpr);
+    if (l_LeftValue == NULL || l_LeftValue->m_Type != TMM_VT_NUMBER)
+    {
+        TM_error("The 'SEC' instruction requires a number as the left expression.");
+        return false;
+    }
+
+    // Get the integer part of the left value, then destroy it.
+    uint16_t l_LeftOperand = (l_LeftValue->m_IntegerPart & 0xFF);
+    TMM_DestroyValue(l_LeftValue);
+
+    // Write the opcode.
+    return TMM_DefineWord(0x0300 + l_LeftOperand);
+}
+
+static bool TMM_EvaluateInstructionCEC (const TMM_Syntax* p_SyntaxNode)
+{
+    // 0x0400 CEC
+    return TMM_DefineWord(0x0400);
+}
+
+static bool TMM_EvaluateInstructionDI (const TMM_Syntax* p_SyntaxNode)
+{
+    // 0x0500 DI
+    return TMM_DefineWord(0x0500);
+}
+
+static bool TMM_EvaluateInstructionEI (const TMM_Syntax* p_SyntaxNode)
+{
+    // 0x0600 EI
+    return TMM_DefineWord(0x0600);
+}
+
+static bool TMM_EvaluateInstructionDAA (const TMM_Syntax* p_SyntaxNode)
+{
+    // 0x0700 DAA
+    return TMM_DefineWord(0x0700);
+}
+
+static bool TMM_EvaluateInstructionSCF (const TMM_Syntax* p_SyntaxNode)
+{
+    // 0x0800 SCF
+    return TMM_DefineWord(0x0800);
+}
+
+static bool TMM_EvaluateInstructionCCF (const TMM_Syntax* p_SyntaxNode)
+{
+    // 0x0900 CCF
+    return TMM_DefineWord(0x0900);
+}
+
+static bool TMM_EvaluateInstructionLD (const TMM_Syntax* p_SyntaxNode)
+{
+    // 0x10X0 LD X, IMM
+    // 0x11X0 LD X, [ADDR32]
+    // 0x12XY LD X, [Y]
+
+    // For all LD instructions, the left expression's syntax node must be a register.
+    if (p_SyntaxNode->m_LeftExpr->m_Type != TMM_ST_REGISTER)
+    {
+        TM_error("The 'LD' instruction requires a register as the left expression.");
+        return false;
+    }
+
+    // Set up the opcode for the instruction.
+    uint16_t l_Opcode = TM_INST_LD;
+    l_Opcode += (((p_SyntaxNode->m_LeftExpr->m_KeywordType - TMM_KT_A) & 0x0F) << 4);
+
+    // Check the right expression's syntax type. Affect nibbles 0 and 1 of the opcode accordingly.
+    switch (p_SyntaxNode->m_RightExpr->m_Type)
+    {
+        case TMM_ST_ADDRESS:
+            l_Opcode += 0x0100;
+            break;
+        case TMM_ST_REGPTR:
+        {
+            TMM_KeywordType l_RightKeywordType = p_SyntaxNode->m_RightExpr->m_KeywordType;
+            l_RightKeywordType -= TMM_KT_A;
+            if ((l_RightKeywordType & 0b11) != 0)
+            {
+                TM_error("The 'LD X, [Y]' instruction requires a long register pointer as the right expression.");
+                return false;
+            }
+
+            l_Opcode += (0x0200 + (l_RightKeywordType & 0xF));
+            return TMM_DefineWord(l_Opcode);
+        }
+        default: break;
+    }
+
+    // Write the opcode to the output buffer.
+    TMM_DefineWord(l_Opcode);
+
+    // Evaluate the right expression.
+    TMM_Value* l_RightValue = TMM_Evaluate(p_SyntaxNode->m_RightExpr);
+    if (l_RightValue == NULL)
+    {
+        return false;
+    }
+
+    // Check the type of the evaluated right expression. It must evaluate to a number.
+    if (l_RightValue->m_Type != TMM_VT_NUMBER)
+    {
+        TM_error("The 'LD' instruction requires a number as the right expression.");
+        TMM_DestroyValue(l_RightValue);
+        return false;
+    }
+
+    // Extract the integer part from the right value, then destroy the value.
+    uint32_t l_RightOperand = l_RightValue->m_IntegerPart & 0xFFFFFFFF;
+    TMM_DestroyValue(l_RightValue);
+
+    // Write the operand to the output buffer.
+    return TMM_DefineLong(l_RightOperand);
+}
+
+static bool TMM_EvaluateInstructionLDQ (const TMM_Syntax* p_SyntaxNode)
+{
+    // 0x13X0 LDQ X, [ADDR16]
+    // 0x14XY LDQ X, [Y]
+
+    // For all LDQ instructions, the left expression's syntax node must be a register.
+    if (p_SyntaxNode->m_LeftExpr->m_Type != TMM_ST_REGISTER)
+    {
+        TM_error("The 'LDQ' instruction requires a register as the left expression.");
+        return false;
+    }
+
+    // Set up the opcode for the instruction.
+    uint16_t l_Opcode = TM_INST_LDQ;
+    l_Opcode += (((p_SyntaxNode->m_LeftExpr->m_KeywordType - TMM_KT_A) & 0x0F) << 4);
+
+    // Check the right expression's syntax type. Affect nibbles 0 and 1 of the opcode accordingly.
+    switch (p_SyntaxNode->m_RightExpr->m_Type)
+    {
+        case TMM_ST_REGPTR:
+        {
+            TMM_KeywordType l_RightKeywordType = p_SyntaxNode->m_RightExpr->m_KeywordType;
+            l_RightKeywordType -= TMM_KT_A;
+            if ((l_RightKeywordType & 0b11) != 1)
+            {
+                TM_error("The 'LDQ X, [Y]' instruction requires a word register pointer as the right expression.");
+                return false;
+            }
+
+            l_Opcode += (0x0100 + (l_RightKeywordType & 0xF));
+            return TMM_DefineWord(l_Opcode);
+        }
+        default: break;
+    }
+
+    // Write the opcode to the output buffer.
+    TMM_DefineWord(l_Opcode);
+
+    // Evaluate the right expression.
+    TMM_Value* l_RightValue = TMM_Evaluate(p_SyntaxNode->m_RightExpr);
+    if (l_RightValue == NULL)
+    {
+        return false;
+    }
+
+    // Check the type of the evaluated right expression. It must evaluate to a number.
+    if (l_RightValue->m_Type != TMM_VT_NUMBER)
+    {
+        TM_error("The 'LDQ' instruction requires a number as the right expression.");
+        TMM_DestroyValue(l_RightValue);
+        return false;
+    }
+
+    // Extract the integer part from the right value, then destroy the value. Get only the lower 16 bits.
+    uint32_t l_RightOperand = l_RightValue->m_IntegerPart & 0xFFFF;
+    TMM_DestroyValue(l_RightValue);
+
+    // Write the operand to the output buffer.
+    return TMM_DefineWord(l_RightOperand);
+}
+
+static bool TMM_EvaluateInstructionLDH (const TMM_Syntax* p_SyntaxNode)
+{
+    // 0x15X0 LDH X, [ADDR8]
+    // 0x16XY LDH X, [Y]
+
+    // For all LDH instructions, the left expression's syntax node must be a register.
+    if (p_SyntaxNode->m_LeftExpr->m_Type != TMM_ST_REGISTER)
+    {
+        TM_error("The 'LDH' instruction requires a register as the left expression.");
+        return false;
+    }
+
+    // Set up the opcode for the instruction.
+    uint16_t l_Opcode = TM_INST_LDH;
+    l_Opcode += (((p_SyntaxNode->m_LeftExpr->m_KeywordType - TMM_KT_A) & 0x0F) << 4);
+
+    // Check the right expression's syntax type. Affect nibbles 0 and 1 of the opcode accordingly.
+    switch (p_SyntaxNode->m_RightExpr->m_Type)
+    {
+        case TMM_ST_REGPTR:
+        {
+            TMM_KeywordType l_RightKeywordType = p_SyntaxNode->m_RightExpr->m_KeywordType;
+            l_RightKeywordType -= TMM_KT_A;
+            if ((l_RightKeywordType & 0b11) < 2)
+            {
+                TM_error("The 'LDH X, [Y]' instruction requires a byte register pointer as the right expression.");
+                return false;
+            }
+
+            l_Opcode += (0x0100 + (l_RightKeywordType & 0xF));
+            return TMM_DefineWord(l_Opcode);
+        }
+        default: break;
+    }
+
+    // Write the opcode to the output buffer.
+    TMM_DefineWord(l_Opcode);
+
+    // Evaluate the right expression.
+    TMM_Value* l_RightValue = TMM_Evaluate(p_SyntaxNode->m_RightExpr);
+    if (l_RightValue == NULL)
+    {
+        return false;
+    }
+
+    // Check the type of the evaluated right expression. It must evaluate to a number.
+    if (l_RightValue->m_Type != TMM_VT_NUMBER)
+    {
+        TM_error("The 'LDH' instruction requires a number as the right expression.");
+        TMM_DestroyValue(l_RightValue);
+        return false;
+    }
+
+    // Extract the integer part from the right value, then destroy the value. Get only the lower 8 bits.
+    uint32_t l_RightOperand = l_RightValue->m_IntegerPart & 0xFF;
+    TMM_DestroyValue(l_RightValue);
+
+    // Write the operand to the output buffer.
+    return TMM_DefineByte(l_RightOperand);
+}
+
+static bool TMM_EvaluateInstructionST (const TMM_Syntax* p_SyntaxNode)
+{
+    // 0x170Y ST [ADDR32], Y
+    // 0x18XY ST [X], Y
+
+    // For all ST instructions, the right expression's syntax node must be a register.
+    if (p_SyntaxNode->m_RightExpr->m_Type != TMM_ST_REGISTER)
+    {
+        TM_error("The 'ST' instruction requires a register as the right expression.");
+        return false;
+    }
+
+    // Set up the opcode for the instruction.
+    uint16_t l_Opcode = TM_INST_ST;
+    l_Opcode += ((p_SyntaxNode->m_RightExpr->m_KeywordType - TMM_KT_A) & 0x0F);
+
+    // Check the left expression's syntax type. Affect nibbles 0 and 1 of the opcode accordingly.
+    switch (p_SyntaxNode->m_LeftExpr->m_Type)
+    {
+        case TMM_ST_REGPTR:
+        {
+            TMM_KeywordType l_LeftKeywordType = p_SyntaxNode->m_LeftExpr->m_KeywordType;
+            l_LeftKeywordType -= TMM_KT_A;
+            if ((l_LeftKeywordType & 0b11) != 0)
+            {
+                TM_error("The 'ST [X], Y' instruction requires a long register pointer as the left expression.");
+                return false;
+            }
+
+            l_Opcode += (0x0100 + ((l_LeftKeywordType & 0xF) << 4));
+            return TMM_DefineWord(l_Opcode);
+        }
+    }
+
+    // In the case of the ST instruction, the left expression must be an address.
+    if (p_SyntaxNode->m_LeftExpr->m_Type != TMM_ST_ADDRESS)
+    {
+        TM_error("The 'ST' instruction requires an address as the left expression.");
+        return false;
+    }
+
+    // Write the opcode to the output buffer.
+    TMM_DefineWord(l_Opcode);
+
+    // Evaluate the left expression.
+    TMM_Value* l_LeftValue = TMM_Evaluate(p_SyntaxNode->m_LeftExpr);
+    if (l_LeftValue == NULL)
+    {
+        return false;
+    }
+
+    // Check the type of the evaluated left expression. It must evaluate to a number.
+    if (l_LeftValue->m_Type != TMM_VT_NUMBER)
+    {
+        TM_error("The 'ST' instruction requires a number as the left expression.");
+        TMM_DestroyValue(l_LeftValue);
+        return false;
+    }
+
+    // Extract the integer part from the left value, then destroy the value.
+    uint32_t l_LeftOperand = l_LeftValue->m_IntegerPart & 0xFFFFFFFF;
+    TMM_DestroyValue(l_LeftValue);
+
+    // Write the operand to the output buffer.
+    return TMM_DefineLong(l_LeftOperand);
+}
+
+static bool TMM_EvaluateInstructionSTQ (const TMM_Syntax* p_SyntaxNode)
+{
+    // 0x190Y STQ [ADDR16], Y
+    // 0x1AXY STQ [X], Y
+
+    // For all STQ instructions, the right expression's syntax node must be a register.
+    if (p_SyntaxNode->m_RightExpr->m_Type != TMM_ST_REGISTER)
+    {
+        TM_error("The 'STQ' instruction requires a register as the right expression.");
+        return false;
+    }
+
+    // Set up the opcode for the instruction.
+    uint16_t l_Opcode = TM_INST_STQ;
+    l_Opcode += ((p_SyntaxNode->m_RightExpr->m_KeywordType - TMM_KT_A) & 0x0F);
+
+    // Check the left expression's syntax type. Affect nibbles 0 and 1 of the opcode accordingly.
+    switch (p_SyntaxNode->m_LeftExpr->m_Type)
+    {
+        case TMM_ST_REGPTR:
+        {
+            TMM_KeywordType l_LeftKeywordType = p_SyntaxNode->m_LeftExpr->m_KeywordType;
+            l_LeftKeywordType -= TMM_KT_A;
+            if ((l_LeftKeywordType & 0b11) != 1)
+            {
+                TM_error("The 'STQ [X], Y' instruction requires a word register pointer as the left expression.");
+                return false;
+            }
+
+            l_Opcode += (0x0100 + ((l_LeftKeywordType & 0xF) << 4));
+            return TMM_DefineWord(l_Opcode);
+        }
+    }
+
+    // In the case of the STQ instruction, the left expression must be an address.
+    if (p_SyntaxNode->m_LeftExpr->m_Type != TMM_ST_ADDRESS)
+    {
+        TM_error("The 'STQ' instruction requires an address as the left expression.");
+        return false;
+    }
+
+    // Write the opcode to the output buffer.
+    TMM_DefineWord(l_Opcode);
+
+    // Evaluate the left expression.
+    TMM_Value* l_LeftValue = TMM_Evaluate(p_SyntaxNode->m_LeftExpr);
+    if (l_LeftValue == NULL)
+    {
+        return false;
+    }
+
+    // Check the type of the evaluated left expression. It must evaluate to a number.
+    if (l_LeftValue->m_Type != TMM_VT_NUMBER)
+    {
+        TM_error("The 'STQ' instruction requires a number as the left expression.");
+        TMM_DestroyValue(l_LeftValue);
+        return false;
+    }
+
+    // Extract the integer part from the left value, then destroy the value. Get only the lower 16 bits.
+    uint32_t l_LeftOperand = l_LeftValue->m_IntegerPart & 0xFFFF;
+    TMM_DestroyValue(l_LeftValue);
+
+    // Write the operand to the output buffer.
+    return TMM_DefineWord(l_LeftOperand);
+}
+
+static bool TMM_EvaluateInstructionSTH (const TMM_Syntax* p_SyntaxNode)
+{
+    // 0x1B0Y STH [ADDR8], Y
+    // 0x1CXY STH [X], Y
+
+    // For all STH instructions, the right expression's syntax node must be a register.
+    if (p_SyntaxNode->m_RightExpr->m_Type != TMM_ST_REGISTER)
+    {
+        TM_error("The 'STH' instruction requires a register as the right expression.");
+        return false;
+    }
+
+    // Set up the opcode for the instruction.
+    uint16_t l_Opcode = TM_INST_STH;
+    l_Opcode += ((p_SyntaxNode->m_RightExpr->m_KeywordType - TMM_KT_A) & 0x0F);
+
+    // Check the left expression's syntax type. Affect nibbles 0 and 1 of the opcode accordingly.
+    switch (p_SyntaxNode->m_LeftExpr->m_Type)
+    {
+        case TMM_ST_REGPTR:
+        {
+            TMM_KeywordType l_LeftKeywordType = p_SyntaxNode->m_LeftExpr->m_KeywordType;
+            l_LeftKeywordType -= TMM_KT_A;
+            if ((l_LeftKeywordType & 0b11) < 2)
+            {
+                TM_error("The 'STH [X], Y' instruction requires a byte register pointer as the left expression.");
+                return false;
+            }
+
+            l_Opcode += (0x0100 + ((l_LeftKeywordType & 0xF) << 4));
+            return TMM_DefineWord(l_Opcode);
+        }
+    }
+
+    // In the case of the STH instruction, the left expression must be an address.
+    if (p_SyntaxNode->m_LeftExpr->m_Type != TMM_ST_ADDRESS)
+    {
+        TM_error("The 'STH' instruction requires an address as the left expression.");
+        return false;
+    }
+
+    // Write the opcode to the output buffer.
+    TMM_DefineWord(l_Opcode);
+
+    // Evaluate the left expression.
+    TMM_Value* l_LeftValue = TMM_Evaluate(p_SyntaxNode->m_LeftExpr);
+    if (l_LeftValue == NULL)
+    {
+        return false;
+    }
+
+    // Check the type of the evaluated left expression. It must evaluate to a number.
+    if (l_LeftValue->m_Type != TMM_VT_NUMBER)
+    {
+        TM_error("The 'STH' instruction requires a number as the left expression.");
+        TMM_DestroyValue(l_LeftValue);
+        return false;
+    }
+
+    // Extract the integer part from the left value, then destroy the value. Get only the lower 8 bits.
+    uint32_t l_LeftOperand = l_LeftValue->m_IntegerPart & 0xFF;
+    TMM_DestroyValue(l_LeftValue);
+
+    // Write the operand to the output buffer.
+    return TMM_DefineByte(l_LeftOperand);
+}
+
+static bool TMM_EvaluateInstructionMV (const TMM_Syntax* p_SyntaxNode)
+{
+    // 0x1DXY MV X, Y
+
+    // For the MV instruction, both expressions must be registers.
+    if (p_SyntaxNode->m_LeftExpr->m_Type != TMM_ST_REGISTER ||
+        p_SyntaxNode->m_RightExpr->m_Type != TMM_ST_REGISTER)
+    {
+        TM_error("The 'MV' instruction requires two registers as the left and right expressions.");
+        return false;
+    }
+
+    // Set up the opcode for the instruction.
+    uint16_t l_Opcode = TM_INST_MV;
+    l_Opcode += (((p_SyntaxNode->m_LeftExpr->m_KeywordType - TMM_KT_A) & 0x0F) << 4);
+    l_Opcode += ((p_SyntaxNode->m_RightExpr->m_KeywordType - TMM_KT_A) & 0x0F);
+
+    // Write the opcode to the output buffer.
+    return TMM_DefineWord(l_Opcode);
+}
+
+static bool TMM_EvaluateInstructionPUSH (const TMM_Syntax* p_SyntaxNode)
+{
+    // 0x1E0Y PUSH Y
+
+    // For the PUSH instruction, the left expression must be a register.
+    if (p_SyntaxNode->m_LeftExpr->m_Type != TMM_ST_REGISTER)
+    {
+        TM_error("The 'PUSH' instruction requires a register as the left expression.");
+        return false;
+    }
+
+    // The register must also be a 32-bit register.
+    TMM_KeywordType l_RegisterType = p_SyntaxNode->m_LeftExpr->m_KeywordType;
+    l_RegisterType -= TMM_KT_A;
+    if ((l_RegisterType & 0b11) != 0)
+    {
+        TM_error("The 'PUSH' instruction requires a 32-bit register as the left expression.");
+        return false;
+    }
+
+    // Set up the opcode for the instruction.
+    uint16_t l_Opcode = TM_INST_PUSH;
+    l_Opcode += (l_RegisterType & 0x0F);
+
+    // Write the opcode to the output buffer.
+    return TMM_DefineWord(l_Opcode);
+}
+
+static bool TMM_EvaluateInstructionPOP (const TMM_Syntax* p_SyntaxNode)
+{
+    // 0x1FX0 POP X
+
+    // For the POP instruction, the left expression must be a register.
+    if (p_SyntaxNode->m_LeftExpr->m_Type != TMM_ST_REGISTER)
+    {
+        TM_error("The 'POP' instruction requires a register as the left expression.");
+        return false;
+    }
+
+    // The register must also be a 32-bit register.
+    TMM_KeywordType l_RegisterType = p_SyntaxNode->m_LeftExpr->m_KeywordType;
+    l_RegisterType -= TMM_KT_A;
+    if ((l_RegisterType & 0b11) != 0)
+    {
+        TM_error("The 'POP' instruction requires a 32-bit register as the left expression.");
+        return false;
+    }
+
+    // Set up the opcode for the instruction.
+    uint16_t l_Opcode = TM_INST_POP;
+    l_Opcode += ((l_RegisterType & 0x0F) << 4);
+
+    // Write the opcode to the output buffer.
+    return TMM_DefineWord(l_Opcode);
+}
+
+static bool TMM_EvaluateInstructionJMP (const TMM_Syntax* p_SyntaxNode)
+{
+    return true;
+}
+
+static bool TMM_EvaluateInstructionJPB (const TMM_Syntax* p_SyntaxNode)
+{
+    return true;
+}
+
+static bool TMM_EvaluateInstructionCALL (const TMM_Syntax* p_SyntaxNode)
+{
+    return true;
+}
+
+static bool TMM_EvaluateInstructionRST (const TMM_Syntax* p_SyntaxNode)
+{
+    return true;
+}
+
+static bool TMM_EvaluateInstructionRET (const TMM_Syntax* p_SyntaxNode)
+{
+    return true;
+}
+
+static bool TMM_EvaluateInstructionRETI (const TMM_Syntax* p_SyntaxNode)
+{
+    return true;
+}
+
+static bool TMM_EvaluateInstructionJPS (const TMM_Syntax* p_SyntaxNode)
+{
+    return true;
+}
+
+static bool TMM_EvaluateInstructionINC (const TMM_Syntax* p_SyntaxNode)
+{
+    return true;
+}
+
+static bool TMM_EvaluateInstructionDEC (const TMM_Syntax* p_SyntaxNode)
+{
+    return true;
+}
+
+static bool TMM_EvaluateInstructionADD (const TMM_Syntax* p_SyntaxNode)
+{
+    return true;
+}
+
+static bool TMM_EvaluateInstructionADC (const TMM_Syntax* p_SyntaxNode)
+{
+    return true;
+}
+
+static bool TMM_EvaluateInstructionSUB (const TMM_Syntax* p_SyntaxNode)
+{
+    return true;
+}
+
+static bool TMM_EvaluateInstructionSBC (const TMM_Syntax* p_SyntaxNode)
+{
+    return true;
+}
+
+static bool TMM_EvaluateInstructionAND (const TMM_Syntax* p_SyntaxNode)
+{
+    return true;
+}
+
+static bool TMM_EvaluateInstructionOR (const TMM_Syntax* p_SyntaxNode)
+{
+    return true;
+}
+
+static bool TMM_EvaluateInstructionXOR (const TMM_Syntax* p_SyntaxNode)
+{
+    return true;
+}
+
+static bool TMM_EvaluateInstructionNOT (const TMM_Syntax* p_SyntaxNode)
+{
+    return true;
+}
+
+static bool TMM_EvaluateInstructionCMP (const TMM_Syntax* p_SyntaxNode)
+{
+    return true;
+}
+
+static bool TMM_EvaluateInstructionSLA (const TMM_Syntax* p_SyntaxNode)
+{
+    return true;
+}
+
+static bool TMM_EvaluateInstructionSRA (const TMM_Syntax* p_SyntaxNode)
+{
+    return true;
+}
+
+static bool TMM_EvaluateInstructionSRL (const TMM_Syntax* p_SyntaxNode)
+{
+    return true;
+}
+
+static bool TMM_EvaluateInstructionRL (const TMM_Syntax* p_SyntaxNode)
+{
+    return true;
+}
+
+static bool TMM_EvaluateInstructionRLC (const TMM_Syntax* p_SyntaxNode)
+{
+    return true;
+}
+
+static bool TMM_EvaluateInstructionRR (const TMM_Syntax* p_SyntaxNode)
+{
+    return true;
+}
+
+static bool TMM_EvaluateInstructionRRC (const TMM_Syntax* p_SyntaxNode)
+{
+    return true;
+}
+
+static bool TMM_EvaluateInstructionBIT (const TMM_Syntax* p_SyntaxNode)
+{
+    return true;
+}
+
+static bool TMM_EvaluateInstructionRES (const TMM_Syntax* p_SyntaxNode)
+{
+    return true;
+}
+
+static bool TMM_EvaluateInstructionSET (const TMM_Syntax* p_SyntaxNode)
+{
+    return true;
+}
+
+static bool TMM_EvaluateInstructionSWAP (const TMM_Syntax* p_SyntaxNode)
+{
+    return true;
+}
+
 // Static Functions - Evaluation ///////////////////////////////////////////////////////////////////
 
 static TMM_Value* TMM_EvaluateString (const TMM_Syntax* p_SyntaxNode)
@@ -594,6 +1397,29 @@ static TMM_Value* TMM_EvaluateNumber (const TMM_Syntax* p_SyntaxNode)
 {
     TMM_Value* l_Value = TMM_CreateNumberValue(p_SyntaxNode->m_Number);
     return l_Value;
+}
+
+static TMM_Value* TMM_EvaluateAddress (const TMM_Syntax* p_SyntaxNode)
+{
+    // The address value is stored in the syntax node's left expression.
+    TMM_Value* l_Value = TMM_Evaluate(p_SyntaxNode->m_LeftExpr);
+    if (l_Value == NULL)
+    {
+        return NULL;
+    }
+
+    // Check if the value is a number.
+    if (l_Value->m_Type != TMM_VT_NUMBER)
+    {
+        TM_error("The address value must be a number.");
+        TMM_DestroyValue(l_Value);
+        return NULL;
+    }
+
+    // Create a new value with the address.
+    TMM_Value* l_AddressValue = TMM_CreateNumberValue(l_Value->m_IntegerPart);
+    TMM_DestroyValue(l_Value);
+    return l_AddressValue;
 }
 
 static TMM_Value* TMM_EvaluateBinaryExpression (const TMM_Syntax* p_SyntaxNode)
@@ -674,7 +1500,7 @@ static TMM_Value* TMM_EvaluateIdentifier (const TMM_Syntax* p_SyntaxNode)
         strncpy(l_LabelName, p_SyntaxNode->m_String, l_LabelStrlen);
 
         // Allocate memory for the label's references array.
-        uint16_t* l_LabelReferences = TM_calloc(TMM_BUILDER_INITIAL_CAPACITY, uint16_t);
+        uint32_t* l_LabelReferences = TM_calloc(TMM_BUILDER_INITIAL_CAPACITY, uint32_t);
         TM_pexpect(l_LabelReferences != NULL, "Failed to allocate memory for label references array");
 
         // Point to the next available label.
@@ -689,8 +1515,15 @@ static TMM_Value* TMM_EvaluateIdentifier (const TMM_Syntax* p_SyntaxNode)
 
     // Add the current output size as a reference to the label.
     TMM_ResizeLabelReferences(l_Label);
-    l_Label->m_References[l_Label->m_ReferenceCount++] = s_Builder.m_OutputSize;
-
+    if (s_Builder.m_CursorInRAM == true)
+    {
+        l_Label->m_References[l_Label->m_ReferenceCount++] = s_Builder.m_RAMCursor;
+    }
+    else
+    {
+        l_Label->m_References[l_Label->m_ReferenceCount++] = s_Builder.m_OutputSize;
+    }
+    
     // Return a number value with the address of the label if it has been resolved.
     // Otherwise, return a number value with the value 0.
     return (l_Label->m_Resolved == true) ?
@@ -723,7 +1556,7 @@ static TMM_Value* TMM_EvaluateLabel (const TMM_Syntax* p_SyntaxNode)
         TM_pexpect(l_LabelName != NULL, "Failed to allocate memory for label name string");
 
         // Allocate memory for the label's references array.
-        uint16_t* l_LabelReferences = TM_calloc(TMM_BUILDER_INITIAL_CAPACITY, uint16_t);
+        uint32_t* l_LabelReferences = TM_calloc(TMM_BUILDER_INITIAL_CAPACITY, uint32_t);
         TM_pexpect(l_LabelReferences != NULL, "Failed to allocate memory for label references array");
 
         // Point to the next available label.
@@ -733,14 +1566,33 @@ static TMM_Value* TMM_EvaluateLabel (const TMM_Syntax* p_SyntaxNode)
         l_Label->m_ReferenceCount = 0;
         l_Label->m_ReferenceCapacity = TMM_BUILDER_INITIAL_CAPACITY;
         
-        // Label is resolved to the current output size.
-        l_Label->m_Address = s_Builder.m_OutputSize;
+        // Label is resolved to...
+        // - ...the current output size if the cursor is in ROM.
+        // - ...the current RAM cursor if the cursor is in RAM.
+        if (s_Builder.m_CursorInRAM == true)
+        {
+            l_Label->m_Address = s_Builder.m_RAMCursor;
+        }
+        else
+        {
+            l_Label->m_Address = s_Builder.m_OutputSize;
+        }
+
         l_Label->m_Resolved = true;
     }
     else
     {
-        // Set the label's resolved address to the current output size.
-        l_Label->m_Address = s_Builder.m_OutputSize;
+        // Set the label's resolved address to...
+        // - ...the current output size if the cursor is in ROM.
+        // - ...the current RAM cursor if the cursor is in RAM.
+        if (s_Builder.m_CursorInRAM == true)
+        {
+            l_Label->m_Address = s_Builder.m_RAMCursor;
+        }
+        else
+        {
+            l_Label->m_Address = s_Builder.m_OutputSize;
+        }
 
         // Has the label not been resolved?
         if (l_Label->m_Resolved == false)
@@ -749,9 +1601,14 @@ static TMM_Value* TMM_EvaluateLabel (const TMM_Syntax* p_SyntaxNode)
             l_Label->m_Resolved = true;
             for (size_t i = 0; i < l_Label->m_ReferenceCount; ++i)
             {
-                uint16_t l_Reference = l_Label->m_References[i];
-                s_Builder.m_Output[l_Reference] = (uint8_t) (l_Label->m_Address & 0xFF);
-                s_Builder.m_Output[l_Reference + 1] = (uint8_t) ((l_Label->m_Address >> 8) & 0xFF);
+                uint32_t l_Reference = l_Label->m_References[i];
+                printf("Writing %u to %u\n", l_Label->m_Address, l_Reference);
+                
+                // Write the label's address to the output buffer.
+                s_Builder.m_Output[l_Reference] = l_Label->m_Address & 0xFF;
+                s_Builder.m_Output[l_Reference + 1] = (l_Label->m_Address >> 8) & 0xFF;
+                s_Builder.m_Output[l_Reference + 2] = (l_Label->m_Address >> 16) & 0xFF;
+                s_Builder.m_Output[l_Reference + 3] = (l_Label->m_Address >> 24) & 0xFF;
             }
         }
     }
@@ -791,6 +1648,14 @@ static TMM_Value* TMM_EvaluateData (const TMM_Syntax* p_SyntaxNode)
                 }
                 else if (l_Value->m_Type == TMM_VT_STRING)
                 {
+                    // String cannot be defined in the RAM section.
+                    if (s_Builder.m_CursorInRAM == true)
+                    {
+                        TM_error("String data cannot be defined in the RAM section.");
+                        TMM_DestroyValue(l_Value);
+                        return NULL;
+                    }
+
                     if (TMM_DefineStringASCII(l_Value->m_String) == false)
                     {
                         TMM_DestroyValue(l_Value);
@@ -881,6 +1746,13 @@ static TMM_Value* TMM_EvaluateData (const TMM_Syntax* p_SyntaxNode)
             // It defines the sequence of bytes after the count expression a certain number of times
             // equal to the value of the count expression.
 
+            // `ds` cannot be used in the RAM section.
+            if (s_Builder.m_CursorInRAM == true)
+            {
+                TM_error("The 'ds' statement cannot be used in the RAM section.");
+                return NULL;
+            }
+
             // Evaluate the count expression.
             TMM_Value* l_CountValue = TMM_Evaluate(p_SyntaxNode->m_CountExpr);
             if (l_CountValue == NULL)
@@ -947,6 +1819,47 @@ static TMM_Value* TMM_EvaluateData (const TMM_Syntax* p_SyntaxNode)
             }
 
             break;
+        }
+        case TMM_KT_DF: // Define fixed-point
+        {
+            // Evaluate each expression in the data syntax node.
+            for (size_t i = 0; i < p_SyntaxNode->m_BodySize; ++i)
+            {
+                TMM_Value* l_Value = TMM_Evaluate(p_SyntaxNode->m_Body[i]);
+                if (l_Value == NULL)
+                {
+                    return NULL;
+                }
+
+                // Check the type of the value. It must be a number.
+                if (l_Value->m_Type == TMM_VT_NUMBER)
+                {
+                    // Place the integer part first.
+                    if (TMM_DefineLong(l_Value->m_IntegerPart & 0xFFFFFFFF) == false)
+                    {
+                        TMM_DestroyValue(l_Value);
+                        return NULL;
+                    }
+
+                    // Only if the cursor is in ROM, then place the fractional part.
+                    if (s_Builder.m_CursorInRAM == false)
+                    {
+                        if (TMM_DefineLong(l_Value->m_FractionalPart & 0xFFFFFFFF) == false)
+                        {
+                            TMM_DestroyValue(l_Value);
+                            return NULL;
+                        }
+                    }
+                }
+                else
+                {
+                    TM_error("Unexpected value type in 'df' statement.");
+                    TMM_DestroyValue(l_Value);
+                    return NULL;
+                }
+
+                TMM_DestroyValue(l_Value);
+            }
         }
         default:
             TM_error("Unexpected keyword type for data syntax node.");
@@ -1433,6 +2346,125 @@ TMM_Value* TMM_EvaluateAssert (const TMM_Syntax* p_SyntaxNode)
     return TMM_CreateVoidValue();
 }
 
+TMM_Value* TMM_EvaluateOrg (const TMM_Syntax* p_SyntaxNode)
+{
+    // Check the syntax node's keyword type. Is it ROM or RAM?
+    if (p_SyntaxNode->m_KeywordType == TMM_KT_ROM)
+    {
+        s_Builder.m_CursorInRAM = false;
+    }
+    else if (p_SyntaxNode->m_KeywordType == TMM_KT_RAM)
+    {
+        // Evaluate the offset expression.
+        TMM_Value* l_OffsetValue = TMM_Evaluate(p_SyntaxNode->m_LeftExpr);
+        if (l_OffsetValue == NULL)
+        {
+            return NULL;
+        }
+        // Check the type of the value. It must be a number.
+        if (l_OffsetValue->m_Type != TMM_VT_NUMBER)
+        {
+            TM_error("Unexpected value type for offset expression in 'org ram' statement.");
+            TMM_DestroyValue(l_OffsetValue);
+            return NULL;
+        }
+        
+        // Correct the offset value so that it's in the range 0x80000000 to 0xFFFFFFFF.
+        size_t l_Offset = (size_t) l_OffsetValue->m_IntegerPart;
+        if (l_Offset > 0xFFFFFFFF)
+        {
+            TM_error("Offset value '%zu' is too large for 'org ram' statement.", l_Offset);
+            TMM_DestroyValue(l_OffsetValue);
+            return NULL;
+        }
+        else if (l_Offset < 0x80000000)
+        {
+            l_Offset += 0x80000000;
+        }
+
+        // Set the offset value.
+        s_Builder.m_CursorInRAM = true;
+        s_Builder.m_RAMCursor = l_Offset;
+    }
+    else
+    {
+        TM_error("Unexpected keyword type for 'org' statement.");
+        return NULL;
+    }
+
+    return TMM_CreateVoidValue();
+}
+
+TMM_Value* TMM_EvaluateInstruction (const TMM_Syntax* p_SyntaxNode)
+{
+    // Instructions cannot be evaluated in the RAM section.
+    if (s_Builder.m_CursorInRAM == true)
+    {
+        TM_error("Instructions cannot be evaluated in the RAM section.");
+        return NULL;
+    }
+
+    // The instruction's mnemonic is stored in the syntax node's keyword type.
+    // Switch through that and determine which instruction to evaluate.
+    bool l_Good = false;
+    switch (p_SyntaxNode->m_KeywordType)
+    {
+        case TMM_KT_NOP: l_Good = TMM_EvaluateInstructionNOP(p_SyntaxNode); break;
+        case TMM_KT_STOP: l_Good = TMM_EvaluateInstructionSTOP(p_SyntaxNode); break;
+        case TMM_KT_HALT: l_Good = TMM_EvaluateInstructionHALT(p_SyntaxNode); break;
+        case TMM_KT_SEC: l_Good = TMM_EvaluateInstructionSEC(p_SyntaxNode); break;
+        case TMM_KT_CEC: l_Good = TMM_EvaluateInstructionCEC(p_SyntaxNode); break;
+        case TMM_KT_DI: l_Good = TMM_EvaluateInstructionDI(p_SyntaxNode); break;
+        case TMM_KT_EI: l_Good = TMM_EvaluateInstructionEI(p_SyntaxNode); break;
+        case TMM_KT_DAA: l_Good = TMM_EvaluateInstructionDAA(p_SyntaxNode); break;
+        case TMM_KT_SCF: l_Good = TMM_EvaluateInstructionSCF(p_SyntaxNode); break;
+        case TMM_KT_CCF: l_Good = TMM_EvaluateInstructionCCF(p_SyntaxNode); break;
+        case TMM_KT_LD: l_Good = TMM_EvaluateInstructionLD(p_SyntaxNode); break;
+        case TMM_KT_LDQ: l_Good = TMM_EvaluateInstructionLDQ(p_SyntaxNode); break;
+        case TMM_KT_LDH: l_Good = TMM_EvaluateInstructionLDH(p_SyntaxNode); break;
+        case TMM_KT_ST: l_Good = TMM_EvaluateInstructionST(p_SyntaxNode); break;
+        case TMM_KT_STQ: l_Good = TMM_EvaluateInstructionSTQ(p_SyntaxNode); break;
+        case TMM_KT_STH: l_Good = TMM_EvaluateInstructionSTH(p_SyntaxNode); break;
+        case TMM_KT_MV: l_Good = TMM_EvaluateInstructionMV(p_SyntaxNode); break;
+        case TMM_KT_PUSH: l_Good = TMM_EvaluateInstructionPUSH(p_SyntaxNode); break;
+        case TMM_KT_POP: l_Good = TMM_EvaluateInstructionPOP(p_SyntaxNode); break;
+        case TMM_KT_JMP: l_Good = TMM_EvaluateInstructionJMP(p_SyntaxNode); break;
+        case TMM_KT_JPB: l_Good = TMM_EvaluateInstructionJPB(p_SyntaxNode); break;
+        case TMM_KT_CALL: l_Good = TMM_EvaluateInstructionCALL(p_SyntaxNode); break;
+        case TMM_KT_RST: l_Good = TMM_EvaluateInstructionRST(p_SyntaxNode); break;
+        case TMM_KT_RET: l_Good = TMM_EvaluateInstructionRET(p_SyntaxNode); break;
+        case TMM_KT_RETI: l_Good = TMM_EvaluateInstructionRETI(p_SyntaxNode); break;
+        case TMM_KT_JPS: l_Good = TMM_EvaluateInstructionJPS(p_SyntaxNode); break;
+        case TMM_KT_INC: l_Good = TMM_EvaluateInstructionINC(p_SyntaxNode); break;
+        case TMM_KT_DEC: l_Good = TMM_EvaluateInstructionDEC(p_SyntaxNode); break;
+        case TMM_KT_ADD: l_Good = TMM_EvaluateInstructionADD(p_SyntaxNode); break;
+        case TMM_KT_ADC: l_Good = TMM_EvaluateInstructionADC(p_SyntaxNode); break;
+        case TMM_KT_SUB: l_Good = TMM_EvaluateInstructionSUB(p_SyntaxNode); break;
+        case TMM_KT_SBC: l_Good = TMM_EvaluateInstructionSBC(p_SyntaxNode); break;
+        case TMM_KT_AND: l_Good = TMM_EvaluateInstructionAND(p_SyntaxNode); break;
+        case TMM_KT_OR: l_Good = TMM_EvaluateInstructionOR(p_SyntaxNode); break;
+        case TMM_KT_XOR: l_Good = TMM_EvaluateInstructionXOR(p_SyntaxNode); break;
+        case TMM_KT_NOT: l_Good = TMM_EvaluateInstructionNOT(p_SyntaxNode); break;
+        case TMM_KT_CMP: l_Good = TMM_EvaluateInstructionCMP(p_SyntaxNode); break;
+        case TMM_KT_SLA: l_Good = TMM_EvaluateInstructionSLA(p_SyntaxNode); break;
+        case TMM_KT_SRA: l_Good = TMM_EvaluateInstructionSRA(p_SyntaxNode); break;
+        case TMM_KT_SRL: l_Good = TMM_EvaluateInstructionSRL(p_SyntaxNode); break;
+        case TMM_KT_RL: l_Good = TMM_EvaluateInstructionRL(p_SyntaxNode); break;
+        case TMM_KT_RLC: l_Good = TMM_EvaluateInstructionRLC(p_SyntaxNode); break;
+        case TMM_KT_RR: l_Good = TMM_EvaluateInstructionRR(p_SyntaxNode); break;
+        case TMM_KT_RRC: l_Good = TMM_EvaluateInstructionRRC(p_SyntaxNode); break;
+        case TMM_KT_BIT: l_Good = TMM_EvaluateInstructionBIT(p_SyntaxNode); break;
+        case TMM_KT_RES: l_Good = TMM_EvaluateInstructionRES(p_SyntaxNode); break;
+        case TMM_KT_SET: l_Good = TMM_EvaluateInstructionSET(p_SyntaxNode); break;
+        case TMM_KT_SWAP: l_Good = TMM_EvaluateInstructionSWAP(p_SyntaxNode); break;
+        default:
+            TM_error("Unexpected keyword type for instruction syntax node.");
+            return NULL;
+    }
+
+    return (l_Good == true) ? TMM_CreateVoidValue() : NULL;
+}
+
 TMM_Value* TMM_EvaluateBlock (const TMM_Syntax* p_SyntaxNode)
 {
     // Create a new value to hold the result of the block.
@@ -1466,6 +2498,10 @@ TMM_Value* TMM_Evaluate (const TMM_Syntax* p_SyntaxNode)
 
         case TMM_ST_NUMBER:
             l_Result = TMM_EvaluateNumber(p_SyntaxNode);
+            break;
+
+        case TMM_ST_ADDRESS:
+            l_Result = TMM_EvaluateAddress(p_SyntaxNode);
             break;
 
         case TMM_ST_BINARY_EXP:
@@ -1536,6 +2572,14 @@ TMM_Value* TMM_Evaluate (const TMM_Syntax* p_SyntaxNode)
             l_Result = TMM_EvaluateAssert(p_SyntaxNode);
             break;
 
+        case TMM_ST_ORG:
+            l_Result = TMM_EvaluateOrg(p_SyntaxNode);
+            break;
+
+        case TMM_ST_INSTRUCTION:
+            l_Result = TMM_EvaluateInstruction(p_SyntaxNode);
+            break;
+
         default:
             TM_error("Unexpected syntax node type: %d.", p_SyntaxNode->m_Type);
             break;
@@ -1557,6 +2601,12 @@ TMM_Value* TMM_Evaluate (const TMM_Syntax* p_SyntaxNode)
 
 void TMM_InitBuilder ()
 {
+    // Initialize the output buffer.
+    s_Builder.m_Output = TM_malloc(TMM_BUILDER_INITIAL_CAPACITY, uint8_t);
+    TM_pexpect(s_Builder.m_Output != NULL, "Failed to allocate memory for the builder's output buffer");
+    s_Builder.m_OutputSize = 0;
+    s_Builder.m_OutputCapacity = TMM_BUILDER_INITIAL_CAPACITY;
+
     // Initialize labels.
     s_Builder.m_Labels = TM_malloc(TMM_BUILDER_INITIAL_CAPACITY, TMM_Label);
     TM_pexpect(s_Builder.m_Labels != NULL, "Failed to allocate memory for the builder's address labels array");
@@ -1611,6 +2661,10 @@ void TMM_ShutdownBuilder ()
     }
     TM_free(s_Builder.m_Labels);
 
+    // Free the output buffer.
+    TM_free(s_Builder.m_Output);
+    s_Builder.m_Output = NULL;
+
     // Free the result value.
     TMM_DestroyValue(s_Builder.m_Result);
 }
@@ -1631,6 +2685,16 @@ bool TMM_SaveBinary (const char* p_OutputPath)
     {
         TM_error("Output path is blank.");
         return false;
+    }
+
+    // Before attempting to write the output, make sure all labels have been resolved.
+    for (size_t i = 0; i < s_Builder.m_LabelCount; ++i)
+    {
+        if (s_Builder.m_Labels[i].m_Resolved == false)
+        {
+            TM_error("Unresolved label: '%s'.", s_Builder.m_Labels[i].m_Name);
+            return false;
+        }
     }
 
     // Attempt to open the output file for writing.

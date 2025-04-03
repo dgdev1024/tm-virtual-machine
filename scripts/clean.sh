@@ -1,3 +1,3 @@
 #!/bin/bash
 
-rm -rf build generated
+rm -rf build generated assets

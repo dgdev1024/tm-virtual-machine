@@ -200,16 +200,16 @@ The TM Virtual CPU has four general purpose registers, each of which is 32 bits 
 | `A`       | `AW`      | `AH`        | `AL`        | Accumulator                                  |
 | `B`       | `BW`      | `BH`        | `BL`        | General-Purpose Register                     |
 | `C`       | `CW`      | `CH`        | `CL`        | General-Purpose Register                     |
-| `D`       | `DW`      | `DH`        | `DL`        | General-Purpose Register                     |
+| `E`       | `EW`      | `EH`        | `EL`        | General-Purpose Register                     |
 
 The general purpose registers are used to store data and intermediate results.
 - `A` is the accumulator register, used for arithmetic and logical operations.
-- `B`, `C`, and `D` are general-purpose registers which can be used for any purpose.
+- `B`, `C`, and `E` are general-purpose registers which can be used for any purpose.
 - The general purpose registers can be accessed as 32-bit long, 16-bit word, or 8-bit byte.
-- `A`, `B`, `C`, and `D` are direct 32-bit registers.
-- `AW`, `BW`, `CW`, and `DW` are the lower 16 bits of the corresponding 32-bit register.
-- `AH`, `BH`, `CH`, and `DH` are the high 8 bits of the corresponding 16-bit register.
-- `AL`, `BL`, `CL`, and `DL` are the low 8 bits of the corresponding 16-bit register.
+- `A`, `B`, `C`, and `E` are direct 32-bit registers.
+- `AW`, `BW`, `CW`, and `EW` are the lower 16 bits of the corresponding 32-bit register.
+- `AH`, `BH`, `CH`, and `EH` are the high 8 bits of the corresponding 16-bit register.
+- `AL`, `BL`, `CL`, and `EL` are the low 8 bits of the corresponding 16-bit register.
 - Each register is initialized to `0x00` at the start of the program and when the CPU is reset.
 
 ### Special Purpose Registers

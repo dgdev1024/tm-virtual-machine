@@ -18,7 +18,7 @@ typedef struct TM_CPU
     uint32_t m_A;           ///< @brief The accumulator register.
     uint32_t m_B;           ///< @brief The general-purpose register B, traditionally used as a base register.
     uint32_t m_C;           ///< @brief The general-purpose register C, traditionally used as a counter register.
-    uint32_t m_D;           ///< @brief The general-purpose register D, traditionally used as a data register.
+    uint32_t m_E;           ///< @brief The general-purpose register E, traditionally used as a data register.
 
     // Fixed-Point Registers
     uint32_t m_FI;          ///< @brief The fixed-point integer register, used for fixed-point arithmetic.
@@ -104,19 +104,19 @@ bool TM_CheckCondition (TM_CPU* p_CPU, TM_CPUCondition p_Condition)
     // Check the condition against the CPU's flags register.
     switch (p_Condition)
     {
-        case TM_COND_NONE:
+        case TM_COND_NC:
             return true;
 
-        case TM_COND_Z:
+        case TM_COND_ZS:
             return (p_CPU->m_Flags.m_Z == 1);
 
-        case TM_COND_NZ:
+        case TM_COND_ZC:
             return (p_CPU->m_Flags.m_Z == 0);
 
-        case TM_COND_C:
+        case TM_COND_CS:
             return (p_CPU->m_Flags.m_C == 1);
 
-        case TM_COND_NC:
+        case TM_COND_CC:
             return (p_CPU->m_Flags.m_C == 0);
     }
 
@@ -130,12 +130,12 @@ bool TM_IsReadable (uint32_t p_Address, size_t p_Size)
 {
     // The readable bounds of the TM CPU's memory map are listed as follows:
     // - `0x00000000` to `0x00000FFF` - Program Metadata
-    // - `0x40000000` to `0x7FFFFFFF` - Program Data
+    // - `0x00003000` to `0x7FFFFFFF` - Program Code
     // - `0x80000000` to `0xFFFCFFFF` - DRAM and XRAM
     // - `0xFFFF0000` to `0xFFFFFFFF` - QRAM and I/O Ports
     return (
         (p_Address >= TM_MDATA_BEGIN && p_Address + p_Size <= TM_MDATA_END) ||
-        (p_Address >= TM_DATA_BEGIN  && p_Address + p_Size <= TM_DATA_END ) ||
+        (p_Address >= TM_CODE_BEGIN  && p_Address + p_Size <= TM_CODE_END ) ||
         (p_Address >= TM_DRAM_BEGIN  && p_Address + p_Size <= TM_XRAM_END ) ||
         (p_Address >= TM_QRAM_BEGIN)
     );
@@ -156,7 +156,7 @@ bool TM_IsExecutable (uint32_t p_Address)
 {
     // The executable bounds of the TM CPU's memory map are listed as follows:
     // - `0x00001000` to `0x00002FFF` - Restart Vectors and Interrupt Handlers
-    // - `0x00003000` to `0x3FFFFFFF` - Program Code
+    // - `0x00003000` to `0x7FFFFFFF` - Program Code
     // - `0xE0000000` to `0xFFFCFFFF` - XRAM
     //
     return (
@@ -2491,7 +2491,7 @@ void TM_ResetCPU (TM_CPU* p_CPU)
     p_CPU->m_A = 0;
     p_CPU->m_B = 0;
     p_CPU->m_C = 0;
-    p_CPU->m_D = 0;
+    p_CPU->m_E = 0;
 
     // Reset the fixed-point registers.
     p_CPU->m_FI = 0;
@@ -2859,10 +2859,10 @@ uint32_t TM_GetRegister (const TM_CPU* p_CPU, TM_CPURegister p_Register)
         case TM_REG_CW: return p_CPU->m_C & 0xFFFF;
         case TM_REG_CH: return (p_CPU->m_C >> 8) & 0xFF;
         case TM_REG_CL: return p_CPU->m_C & 0xFF;
-        case TM_REG_D:  return p_CPU->m_D;
-        case TM_REG_DW: return p_CPU->m_D & 0xFFFF;
-        case TM_REG_DH: return (p_CPU->m_D >> 8) & 0xFF;
-        case TM_REG_DL: return p_CPU->m_D & 0xFF;
+        case TM_REG_E:  return p_CPU->m_E;
+        case TM_REG_EW: return p_CPU->m_E & 0xFFFF;
+        case TM_REG_EH: return (p_CPU->m_E >> 8) & 0xFF;
+        case TM_REG_EL: return p_CPU->m_E & 0xFF;
         default:
             fprintf(stderr, "TM: Invalid register specified.\n");
             return 0;
@@ -2893,10 +2893,10 @@ void TM_SetRegister (TM_CPU* p_CPU, TM_CPURegister p_Register, uint32_t p_Value)
         case TM_REG_CW: p_CPU->m_C = (p_CPU->m_C & 0xFFFF0000) | (p_Value & 0xFFFF); break;
         case TM_REG_CH: p_CPU->m_C = (p_CPU->m_C & 0xFFFF00FF) | ((p_Value & 0xFF) << 8); break;
         case TM_REG_CL: p_CPU->m_C = (p_CPU->m_C & 0xFFFFFF00) | (p_Value & 0xFF); break;
-        case TM_REG_D:  p_CPU->m_D = p_Value; break;
-        case TM_REG_DW: p_CPU->m_D = (p_CPU->m_D & 0xFFFF0000) | (p_Value & 0xFFFF); break;
-        case TM_REG_DH: p_CPU->m_D = (p_CPU->m_D & 0xFFFF00FF) | ((p_Value & 0xFF) << 8); break;
-        case TM_REG_DL: p_CPU->m_D = (p_CPU->m_D & 0xFFFFFF00) | (p_Value & 0xFF); break;
+        case TM_REG_E:  p_CPU->m_E = p_Value; break;
+        case TM_REG_EW: p_CPU->m_E = (p_CPU->m_E & 0xFFFF0000) | (p_Value & 0xFFFF); break;
+        case TM_REG_EH: p_CPU->m_E = (p_CPU->m_E & 0xFFFF00FF) | ((p_Value & 0xFF) << 8); break;
+        case TM_REG_EL: p_CPU->m_E = (p_CPU->m_E & 0xFFFFFF00) | (p_Value & 0xFF); break;
         default:
             fprintf(stderr, "TM: Invalid register specified.\n");
             break;
