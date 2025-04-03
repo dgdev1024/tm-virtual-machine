@@ -20,6 +20,105 @@
 #include <assert.h>
 #include <errno.h>
 
+// Helper Macros - Logging /////////////////////////////////////////////////////////////////////////
+
+#define TM_log(p_Stream, p_Level, ...) \
+    fprintf(p_Stream, "[%s] %s: ", p_Level, __func__); \
+    fprintf(p_Stream, __VA_ARGS__); \
+    fprintf(p_Stream, "\n");
+#define TM_info(...) TM_log(stdout, "INFO", __VA_ARGS__)
+#define TM_warn(...) TM_log(stderr, "WARN", __VA_ARGS__)
+#define TM_error(...) TM_log(stderr, "ERROR", __VA_ARGS__)
+#define TM_fatal(...) TM_log(stderr, "FATAL", __VA_ARGS__)
+
+#define TM_perror(...) \
+{ \
+    int l_Errno = errno; \
+    fprintf(stderr, "[%s] %s: ", "ERROR", __func__); \
+    fprintf(stderr, __VA_ARGS__); \
+    fprintf(stderr, " - %s\n", strerror(l_Errno)); \
+}
+#define TM_pfatal(...) \
+{ \
+    int l_Errno = errno; \
+    fprintf(stderr, "[%s] %s: ", "FATAL", __func__); \
+    fprintf(stderr, __VA_ARGS__); \
+    fprintf(stderr, " - %s\n", strerror(l_Errno)); \
+}
+
+#if defined(TM_DEBUG)
+    #define TM_debug(...) TM_log(stdout, "DEBUG", __VA_ARGS__)
+    #define TM_trace() \
+        TM_log(stdout, "TRACE", " - In Function '%s'", __func__); \
+        TM_log(stdout, "TRACE", " - In File '%s:%d'", __FILE__, __LINE__);
+#else
+    #define TM_debug(...)
+    #define TM_trace()
+#endif
+
+// Helper Macros - Error Handling //////////////////////////////////////////////////////////////////
+
+#define TM_assert(p_Clause) \
+    if (!(p_Clause)) \
+    { \
+        TM_fatal("Assertion Failure: '%s'!", #p_Clause); \
+        TM_trace(); \
+        abort(); \
+    }
+#define TM_expect(p_Clause, ...) \
+    if (!(p_Clause)) \
+    { \
+        TM_fatal(__VA_ARGS__); \
+        TM_trace(); \
+        exit(EXIT_FAILURE); \
+    }
+#define TM_pexpect(p_Clause, ...) \
+    if (!(p_Clause)) \
+    { \
+        TM_pfatal(__VA_ARGS__); \
+        TM_trace(); \
+        exit(EXIT_FAILURE); \
+    }
+#define TM_check(p_Clause, ...) \
+    if (!(p_Clause)) \
+    { \
+        TM_error(__VA_ARGS__); \
+        TM_trace(); \
+        return; \
+    }
+#define TM_pcheck(p_Clause, ...) \
+    if (!(p_Clause)) \
+    { \
+        TM_perror(__VA_ARGS__); \
+        TM_trace(); \
+        return; \
+    }
+#define TM_vcheck(p_Clause, p_Value, ...) \
+    if (!(p_Clause)) \
+    { \
+        TM_error(__VA_ARGS__); \
+        TM_trace(); \
+        return p_Value; \
+    }
+#define TM_pvcheck(p_Clause, p_Value, ...) \
+    if (!(p_Clause)) \
+    { \
+        TM_perror(__VA_ARGS__); \
+        TM_trace(); \
+        return p_Value; \
+    }
+
+// Helper Macros - Memory Management ///////////////////////////////////////////////////////////////
+
+#define TM_malloc(p_Count, p_Type) \
+    ((p_Type*) malloc((p_Count) * sizeof(p_Type)))
+#define TM_calloc(p_Count, p_Type) \
+    ((p_Type*) calloc((p_Count), sizeof(p_Type)))
+#define TM_realloc(p_Ptr, p_Count, p_Type) \
+    ((p_Type*) realloc((p_Ptr), (p_Count) * sizeof(p_Type)))
+#define TM_free(p_Ptr) \
+    if (p_Ptr != NULL) { free(p_Ptr); } p_Ptr = NULL;
+
 // Memory Map Constants ////////////////////////////////////////////////////////////////////////////
 
 #define TM_ROM_BEGIN            0x00000000

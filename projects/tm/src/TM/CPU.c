@@ -20,6 +20,10 @@ typedef struct TM_CPU
     uint32_t m_C;           ///< @brief The general-purpose register C, traditionally used as a counter register.
     uint32_t m_D;           ///< @brief The general-purpose register D, traditionally used as a data register.
 
+    // Fixed-Point Registers
+    uint32_t m_FI;          ///< @brief The fixed-point integer register, used for fixed-point arithmetic.
+    uint32_t m_FF;          ///< @brief The fixed-point fraction register, used for fixed-point arithmetic.
+
     // Program Counter and Stack Pointers
     uint32_t m_PC;          ///< @brief The program counter, which points to the next instruction to execute.
     uint16_t m_DSP;         ///< @brief The data stack pointer, which points to the top of the data stack.
@@ -2488,6 +2492,10 @@ void TM_ResetCPU (TM_CPU* p_CPU)
     p_CPU->m_B = 0;
     p_CPU->m_C = 0;
     p_CPU->m_D = 0;
+
+    // Reset the fixed-point registers.
+    p_CPU->m_FI = 0;
+    p_CPU->m_FF = 0;
 
     // Reset the program counter and stack pointers.
     p_CPU->m_PC = TM_CODE_BEGIN;

@@ -24,6 +24,7 @@ workspace "tm-virtual-machine"
         optimize "On"
     filter { "system:linux" }
         defines { "TM_LINUX" }
+        cdialect "gnu17"
     filter {}
 
     -- "tm" - TM Virtual Machine
