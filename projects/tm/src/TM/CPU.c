@@ -516,16 +516,16 @@ bool TM_Fetch_REG_REGPTR32 (TM_CPU* p_CPU)
     // Argument 1: `REG` = Destination Register
     // Argument 2: `REGPTR32` = Absolute Address (Register Pointer)
 
-    // The register needs to contain a 32-bit address, so ensure that the destination register is
+    // The register needs to contain a 32-bit address, so ensure that the source register is
     // a 32-bit register.
-    if ((p_CPU->m_IP1 & 0b11) != 0b00)
+    if ((p_CPU->m_IP2 & 0b11) != 0b00)
     {
         p_CPU->m_EA = p_CPU->m_IA;
         return TM_SetErrorCode(p_CPU, TM_EC_INVALID_ARGUMENT);
     }
 
-    // Get the address from the destination register. Place it into the memory address register.
-    p_CPU->m_MA = TM_GetRegister(p_CPU, p_CPU->m_IP1);
+    // Get the address from the source register. Place it into the memory address register.
+    p_CPU->m_MA = TM_GetRegister(p_CPU, p_CPU->m_IP2);
 
     // Depending on the low two bits of the destination register...
     // - `0b00` = 32-bit register; read a double word at the address in the memory address register.
@@ -583,16 +583,16 @@ bool TM_Fetch_REG_REGPTR16 (TM_CPU* p_CPU)
     // Argument 1: `REG` = Destination Register
     // Argument 2: `REGPTR16` = 16-bit Relative Address (Register Pointer, Relative to QRAM)
 
-    // The register needs to contain a 16-bit address, so ensure that the destination register is
+    // The register needs to contain a 16-bit address, so ensure that the source register is
     // a 16-bit register.
-    if ((p_CPU->m_IP1 & 0b11) != 0b01)
+    if ((p_CPU->m_IP2 & 0b11) != 0b01)
     {
         p_CPU->m_EA = p_CPU->m_IA;
         return TM_SetErrorCode(p_CPU, TM_EC_INVALID_ARGUMENT);
     }
 
-    // Get the address from the destination register. Place it into the memory address register.
-    p_CPU->m_MA = TM_GetRegister(p_CPU, p_CPU->m_IP1) + TM_QRAM_BEGIN;
+    // Get the address from the source register. Place it into the memory address register.
+    p_CPU->m_MA = TM_GetRegister(p_CPU, p_CPU->m_IP2) + TM_QRAM_BEGIN;
 
     // Depending on the low two bits of the destination register...
     // - `0b00` = 32-bit register; read a double word at the address in the memory address register.
@@ -630,16 +630,16 @@ bool TM_Fetch_REG_REGPTR8 (TM_CPU* p_CPU)
     // Argument 1: `REG` = Destination Register
     // Argument 2: `REGPTR8` = 8-bit Relative Address (Register Pointer, Relative to Hardware I/O Ports)
 
-    // The register needs to contain an 8-bit address, so ensure that the destination register is
+    // The register needs to contain an 8-bit address, so ensure that the source register is
     // an 8-bit register.
-    if ((p_CPU->m_IP1 & 0b11) < 0b10)
+    if ((p_CPU->m_IP2 & 0b11) < 0b10)
     {
         p_CPU->m_EA = p_CPU->m_IA;
         return TM_SetErrorCode(p_CPU, TM_EC_INVALID_ARGUMENT);
     }
 
-    // Get the address from the destination register. Place it into the memory address register.
-    p_CPU->m_MA = TM_GetRegister(p_CPU, p_CPU->m_IP1) + TM_IO_BEGIN;
+    // Get the address from the source register. Place it into the memory address register.
+    p_CPU->m_MA = TM_GetRegister(p_CPU, p_CPU->m_IP2) + TM_IO_BEGIN;
 
     // Depending on the low two bits of the destination register...
     // - `0b00` = 32-bit register; read a double word at the address in the memory address register.
@@ -764,16 +764,16 @@ bool TM_Fetch_REGPTR32_REG (TM_CPU* p_CPU)
     // Argument 1: `REGPTR32` = Absolute Address (Register Pointer)
     // Argument 2: `REG` = Source Register
 
-    // The register needs to contain a 32-bit address, so ensure that the source register is
+    // The register needs to contain a 32-bit address, so ensure that the destination register is
     // a 32-bit register.
-    if ((p_CPU->m_IP2 & 0b11) != 0b00)
+    if ((p_CPU->m_IP1 & 0b11) != 0b00)
     {
         p_CPU->m_EA = p_CPU->m_IA;
         return TM_SetErrorCode(p_CPU, TM_EC_INVALID_ARGUMENT);
     }
 
-    // Get the address from the source register. Place it into the memory address register.
-    p_CPU->m_MA = TM_GetRegister(p_CPU, p_CPU->m_IP2);
+    // Get the address from the destination register. Place it into the memory address register.
+    p_CPU->m_MA = TM_GetRegister(p_CPU, p_CPU->m_IP1);
 
     // Depending on the low two bits of the source register, make sure the address range of the
     // appropriate size is writable.
@@ -819,16 +819,16 @@ bool TM_Fetch_REGPTR16_REG (TM_CPU* p_CPU)
     // Argument 1: `REGPTR16` = 16-bit Relative Address (Register Pointer, Relative to QRAM)
     // Argument 2: `REG` = Source Register
 
-    // The register needs to contain a 16-bit address, so ensure that the source register is
+    // The register needs to contain a 16-bit address, so ensure that the destination register is
     // a 16-bit register.
-    if ((p_CPU->m_IP2 & 0b11) != 0b01)
+    if ((p_CPU->m_IP1 & 0b11) != 0b01)
     {
         p_CPU->m_EA = p_CPU->m_IA;
         return TM_SetErrorCode(p_CPU, TM_EC_INVALID_ARGUMENT);
     }
 
-    // Get the address from the source register. Place it into the memory address register.
-    p_CPU->m_MA = TM_GetRegister(p_CPU, p_CPU->m_IP2) + TM_QRAM_BEGIN;
+    // Get the address from the destination register. Place it into the memory address register.
+    p_CPU->m_MA = TM_GetRegister(p_CPU, p_CPU->m_IP1) + TM_QRAM_BEGIN;
 
     // Because the absolute address is within the QRAM or I/O Ports, the address is always writable.
     // Because the address is to be written to, set the destination address flag to true.
@@ -845,16 +845,16 @@ bool TM_Fetch_REGPTR8_REG (TM_CPU* p_CPU)
     // Argument 1: `REGPTR8` = 8-bit Relative Address (Register Pointer, Relative to Hardware I/O Ports)
     // Argument 2: `REG` = Source Register
 
-    // The register needs to contain an 8-bit address, so ensure that the source register is
+    // The register needs to contain an 8-bit address, so ensure that the destination register is
     // an 8-bit register.
-    if ((p_CPU->m_IP2 & 0b11) < 0b10)
+    if ((p_CPU->m_IP1 & 0b11) < 0b10)
     {
         p_CPU->m_EA = p_CPU->m_IA;
         return TM_SetErrorCode(p_CPU, TM_EC_INVALID_ARGUMENT);
     }
 
-    // Get the address from the source register. Place it into the memory address register.
-    p_CPU->m_MA = TM_GetRegister(p_CPU, p_CPU->m_IP2) + TM_IO_BEGIN;
+    // Get the address from the destination register. Place it into the memory address register.
+    p_CPU->m_MA = TM_GetRegister(p_CPU, p_CPU->m_IP1) + TM_IO_BEGIN;
 
     // Because the absolute address is within the I/O Ports' address range, the address is always
     // writable. Because the address is to be written to, set the destination address flag to true.
@@ -1813,6 +1813,9 @@ static bool TM_Execute_SLA (TM_CPU* p_CPU)
     // Shift the value in the memory data register left by one bit. Store the result.
     uint32_t l_Result = p_CPU->m_MD << 1;
 
+    // Make sure the rightmost bit is set to zero.
+    l_Result &= 0xFFFFFFFE;
+
     // If the destination address flag is set, then write the result back to the bus at the address
     // in the memory address register.
     //
@@ -2185,8 +2188,8 @@ static bool TM_Execute_RRC (TM_CPU* p_CPU)
     // Otherwise, write the result back to the destination register.
     if (p_CPU->m_DA == true)
     {
-        // Before writing the result, make sure bit 7 is set to the old carry flag.
-        l_Result |= (p_CPU->m_Flags.m_C << 7);
+        // Before writing the result, make sure bit 7 is set to bit 7 of the original value.
+        l_Result |= (p_CPU->m_MD & 0x80);
 
         TM_WriteByte(p_CPU, p_CPU->m_MA, l_Result & 0xFF);
         TM_CycleCPU(p_CPU, 1);
@@ -2198,18 +2201,18 @@ static bool TM_Execute_RRC (TM_CPU* p_CPU)
     else
     {
         // Before writing the result, based on the size of the destination register, make sure either
-        // bit 7, 15 or 31 is set to the old carry flag.
+        // bit 7, 15 or 31 is set to the leftmost bit of the original value.
         if ((p_CPU->m_IP1 & 0b11) >= 2)
         {
-            l_Result |= (p_CPU->m_Flags.m_C << 7);
+            l_Result |= (p_CPU->m_MD & 0x80);
         }
         else if ((p_CPU->m_IP1 & 0b11) == 0b01)
         {
-            l_Result |= (p_CPU->m_Flags.m_C << 15);
+            l_Result |= (p_CPU->m_MD & 0x8000);
         }
         else
         {
-            l_Result |= (p_CPU->m_Flags.m_C << 31);
+            l_Result |= (p_CPU->m_MD & 0x80000000);
         }
 
         TM_SetRegister(p_CPU, p_CPU->m_IP1, l_Result);
