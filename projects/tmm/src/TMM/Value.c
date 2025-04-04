@@ -30,8 +30,8 @@ TMM_Value* TMM_CreateNumberValue (double p_Number)
     double l_FractionalPart = modf(p_Number, &l_IntegerPart);
 
     l_Value->m_Number = p_Number;
-    l_Value->m_IntegerPart = (uint64_t) l_IntegerPart;
-    l_Value->m_FractionalPart = (uint64_t) (l_FractionalPart * UINT64_MAX);
+    l_Value->m_IntegerPart = (uint32_t) l_IntegerPart;
+    l_Value->m_FractionalPart = (uint32_t) (l_FractionalPart * UINT32_MAX);
 
     return l_Value;
 }
@@ -104,7 +104,7 @@ void TMM_PrintValue (const TMM_Value* p_Value)
         case TMM_VT_NUMBER:
             if (p_Value->m_FractionalPart == 0)
             {
-                printf("%lu", p_Value->m_IntegerPart);
+                printf("%u", p_Value->m_IntegerPart);
             }
             else
             {
@@ -136,8 +136,8 @@ void TMM_SetNumberValue (TMM_Value* p_Value, double p_Number)
     double l_FractionalPart = modf(p_Number, &l_IntegerPart);
 
     p_Value->m_Number = p_Number;
-    p_Value->m_IntegerPart = (uint64_t) l_IntegerPart;
-    p_Value->m_FractionalPart = (uint64_t) (l_FractionalPart * UINT64_MAX);
+    p_Value->m_IntegerPart = (uint32_t) l_IntegerPart;
+    p_Value->m_FractionalPart = (uint32_t) (l_FractionalPart * UINT32_MAX);
 }
 
 void TMM_SetStringValue (TMM_Value* p_Value, const char* p_String)

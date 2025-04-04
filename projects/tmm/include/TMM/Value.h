@@ -29,8 +29,8 @@ typedef struct TMM_Value
         struct
         {
             double      m_Number;
-            uint64_t    m_IntegerPart;
-            uint64_t    m_FractionalPart;
+            uint32_t    m_IntegerPart;
+            uint32_t    m_FractionalPart;
         };
 
         char* m_String;

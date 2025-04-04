@@ -9,7 +9,7 @@
 // Constants ///////////////////////////////////////////////////////////////////////////////////////
 
 #define TMM_BUILDER_INITIAL_CAPACITY 8
-#define TMM_BUILDER_OUTPUT_CAPACITY 0x400
+#define TMM_BUILDER_OUTPUT_CAPACITY 0x4000
 #define TMM_BUILDER_CALL_STACK_SIZE 32
 
 // Label Structure /////////////////////////////////////////////////////////////////////////////////
@@ -49,6 +49,7 @@ static struct
     uint8_t*        m_Output;
     size_t          m_OutputSize;
     size_t          m_OutputCapacity;
+    size_t          m_ROMCursor;
 
     bool            m_CursorInRAM;
     size_t          m_RAMCursor;
@@ -74,6 +75,7 @@ static struct
     .m_Output = NULL,
     .m_OutputSize = 0,
     .m_OutputCapacity = 0,
+    .m_ROMCursor = 0,
     .m_CursorInRAM = false,
     .m_RAMCursor = 0,
     .m_Result = NULL,
@@ -193,7 +195,7 @@ static void TMM_ResizeDefinesArrays ()
 static bool TMM_ResizeOutputBuffer (size_t p_WriteSize)
 {
     size_t l_NewCapacity = s_Builder.m_OutputCapacity;
-    while (s_Builder.m_OutputSize + p_WriteSize >= l_NewCapacity)
+    while (s_Builder.m_ROMCursor + p_WriteSize >= l_NewCapacity)
     {
         l_NewCapacity += (l_NewCapacity * 0.5);
     }
@@ -240,7 +242,13 @@ static bool TMM_DefineByte (uint8_t p_Value)
         return false;
     }
 
-    s_Builder.m_Output[s_Builder.m_OutputSize++] = p_Value;
+    if (s_Builder.m_ROMCursor + 1 > s_Builder.m_OutputSize)
+    {
+        s_Builder.m_OutputSize = s_Builder.m_ROMCursor + 1;
+    }
+
+    s_Builder.m_Output[s_Builder.m_ROMCursor++] = p_Value;
+
     return true;
 }
 
@@ -263,8 +271,13 @@ static bool TMM_DefineWord (uint16_t p_Value)
         return false;
     }
 
-    s_Builder.m_Output[s_Builder.m_OutputSize++] = (uint8_t) (p_Value & 0xFF);
-    s_Builder.m_Output[s_Builder.m_OutputSize++] = (uint8_t) ((p_Value >> 8) & 0xFF);
+    if (s_Builder.m_ROMCursor + 2 > s_Builder.m_OutputSize)
+    {
+        s_Builder.m_OutputSize = s_Builder.m_ROMCursor + 2;
+    }
+
+    s_Builder.m_Output[s_Builder.m_ROMCursor++] = (uint8_t) (p_Value & 0xFF);
+    s_Builder.m_Output[s_Builder.m_ROMCursor++] = (uint8_t) ((p_Value >> 8) & 0xFF);
     return true;
 }
 
@@ -285,6 +298,11 @@ static bool TMM_DefineLong (uint32_t p_Value)
     if (TMM_ResizeOutputBuffer(4) == false)
     {
         return false;
+    }
+
+    if (s_Builder.m_ROMCursor + 4 > s_Builder.m_OutputSize)
+    {
+        s_Builder.m_OutputSize = s_Builder.m_ROMCursor + 4;
     }
 
     s_Builder.m_Output[s_Builder.m_OutputSize++] = (uint8_t) (p_Value & 0xFF);
@@ -337,12 +355,17 @@ static bool TMM_DefineStringASCII (const char* p_String)
         return false;
     }
 
-    for (size_t i = 0; i < l_Length; ++i)
+    if (s_Builder.m_ROMCursor + l_Length + 1 > s_Builder.m_OutputSize)
     {
-        s_Builder.m_Output[s_Builder.m_OutputSize++] = (uint8_t) p_String[i];
+        s_Builder.m_OutputSize = s_Builder.m_ROMCursor + l_Length + 1;
     }
 
-    s_Builder.m_Output[s_Builder.m_OutputSize++] = 0;
+    for (size_t i = 0; i < l_Length; ++i)
+    {
+        s_Builder.m_Output[s_Builder.m_ROMCursor++] = (uint8_t) p_String[i];
+    }
+
+    s_Builder.m_Output[s_Builder.m_ROMCursor++] = 0;
 
     return true;
 }
@@ -401,9 +424,14 @@ static bool TMM_DefineBinaryFile (const char* p_Filename, size_t p_Offset, size_
         return false;
     }
 
+    if (s_Builder.m_ROMCursor + p_Length > s_Builder.m_OutputSize)
+    {
+        s_Builder.m_OutputSize = s_Builder.m_ROMCursor + p_Length;
+    }
+
     // Read the binary data from the file into the output buffer.
     fseek(l_File, p_Offset, SEEK_SET);
-    fread(s_Builder.m_Output + s_Builder.m_OutputSize, 1, p_Length, l_File);
+    fread(s_Builder.m_Output + s_Builder.m_ROMCursor, 1, p_Length, l_File);
     if (ferror(l_File) && !feof(l_File))
     {
         TM_perror("Failed to read included binary file '%s'", p_Filename);
@@ -411,7 +439,7 @@ static bool TMM_DefineBinaryFile (const char* p_Filename, size_t p_Offset, size_
         return false;
     }
 
-    s_Builder.m_OutputSize += p_Length;
+    s_Builder.m_ROMCursor += p_Length;
 
     // Close the file and return success.
     fclose(l_File);
@@ -585,7 +613,7 @@ static TMM_Value* TMM_PerformBinaryOperation (const TMM_Value* p_LeftValue,
             char l_Buffer[32];
             if (p_LeftValue->m_FractionalPart == 0)
             {
-                snprintf(l_Buffer, sizeof(l_Buffer), "%ld", p_LeftValue->m_IntegerPart);
+                snprintf(l_Buffer, sizeof(l_Buffer), "%d", p_LeftValue->m_IntegerPart);
             }
             else
             {
@@ -635,7 +663,7 @@ static TMM_Value* TMM_PerformBinaryOperation (const TMM_Value* p_LeftValue,
             char l_Buffer[32];
             if (p_RightValue->m_FractionalPart == 0)
             {
-                snprintf(l_Buffer, sizeof(l_Buffer), "%ld", p_RightValue->m_IntegerPart);
+                snprintf(l_Buffer, sizeof(l_Buffer), "%d", p_RightValue->m_IntegerPart);
             }
             else
             {
@@ -1242,147 +1270,1401 @@ static bool TMM_EvaluateInstructionPOP (const TMM_Syntax* p_SyntaxNode)
 
 static bool TMM_EvaluateInstructionJMP (const TMM_Syntax* p_SyntaxNode)
 {
-    return true;
+    // 0x20X0 JMP X, ADDR32
+    // 0x21XY JMP X, Y
+
+    // For the JMP instruction, the left expression must be an execution condition.
+    if (p_SyntaxNode->m_LeftExpr->m_Type != TMM_ST_CONDITION)
+    {
+        TM_error("The 'JMP' instruction requires an execution condition as the left expression.");
+        return false;
+    }
+
+    // Set up the opcode for the instruction.
+    uint16_t l_Opcode = TM_INST_JMP;
+    l_Opcode += (((p_SyntaxNode->m_LeftExpr->m_KeywordType - TMM_KT_NC) & 0x0F) << 4);
+
+    // Check the right expression's syntax type. Affect nibbles 0 and 1 of the opcode accordingly.
+    switch (p_SyntaxNode->m_RightExpr->m_Type)
+    {
+        case TMM_ST_REGISTER:
+        {
+            TMM_KeywordType l_RightKeywordType = p_SyntaxNode->m_RightExpr->m_KeywordType;
+            l_RightKeywordType -= TMM_KT_A;
+            if ((l_RightKeywordType & 0b11) != 0)
+            {
+                TM_error("The 'JMP X, Y' instruction requires a 32-bit register as the right expression.");
+                return false;
+            }
+
+            l_Opcode += (0x0100 + (l_RightKeywordType & 0xF));
+            return TMM_DefineWord(l_Opcode);
+        }
+        default: break;
+    }
+
+    // Write the opcode to the output buffer.
+    TMM_DefineWord(l_Opcode);
+
+    // Evaluate the right expression. It should be a number.
+    TMM_Value* l_RightValue = TMM_Evaluate(p_SyntaxNode->m_RightExpr);
+    if (l_RightValue == NULL)
+    {
+        return false;
+    }
+
+    // Check the type of the evaluated right expression. It must evaluate to a number.
+    if (l_RightValue->m_Type != TMM_VT_NUMBER)
+    {
+        TM_error("The 'JMP' instruction requires a number as the right expression.");
+        TMM_DestroyValue(l_RightValue);
+        return false;
+    }
+
+    // Extract the integer part from the right value, then destroy the value.
+    uint32_t l_RightOperand = l_RightValue->m_IntegerPart & 0xFFFFFFFF;
+    TMM_DestroyValue(l_RightValue);
+
+    // Write the operand to the output buffer.
+    return TMM_DefineLong(l_RightOperand);
 }
 
 static bool TMM_EvaluateInstructionJPB (const TMM_Syntax* p_SyntaxNode)
 {
-    return true;
+    // 0x22X0 JPB X, SIMM16
+
+    // For the JPB instruction, the left expression must be an execution condition.
+    if (p_SyntaxNode->m_LeftExpr->m_Type != TMM_ST_CONDITION)
+    {
+        TM_error("The 'JPB' instruction requires an execution condition as the left expression.");
+        return false;
+    }
+
+    // Set up the opcode for the instruction.
+    uint16_t l_Opcode = TM_INST_JPB;
+    l_Opcode += (((p_SyntaxNode->m_LeftExpr->m_KeywordType - TMM_KT_NC) & 0x0F) << 4);
+
+    // Write the opcode to the output buffer.
+    TMM_DefineWord(l_Opcode);
+
+    // Evaluate the right expression. It should be a number.
+    TMM_Value* l_RightValue = TMM_Evaluate(p_SyntaxNode->m_RightExpr);
+    if (l_RightValue == NULL)
+    {
+        return false;
+    }
+
+    // Check the type of the evaluated right expression. It must evaluate to a number.
+    if (l_RightValue->m_Type != TMM_VT_NUMBER)
+    {
+        TM_error("The 'JPB' instruction requires a number as the right expression.");
+        TMM_DestroyValue(l_RightValue);
+        return false;
+    }
+
+    // Extract the integer part from the right value, truncate it to 16 bits, then destroy the value.
+    uint16_t l_RightOperand = (l_RightValue->m_IntegerPart & 0xFFFF);
+    TMM_DestroyValue(l_RightValue);
+
+    // Write the operand to the output buffer.
+    return TMM_DefineWord(l_RightOperand);
 }
 
 static bool TMM_EvaluateInstructionCALL (const TMM_Syntax* p_SyntaxNode)
 {
-    return true;
+    // 0x23X0 CALL X, ADDR32
+
+    // For the CALL instruction, the left expression must be an execution condition.
+    if (p_SyntaxNode->m_LeftExpr->m_Type != TMM_ST_CONDITION)
+    {
+        TM_error("The 'CALL' instruction requires an execution condition as the left expression.");
+        return false;
+    }
+
+    // Set up the opcode for the instruction, then write it to the output buffer.
+    uint16_t l_Opcode = TM_INST_CALL;
+    l_Opcode += (((p_SyntaxNode->m_LeftExpr->m_KeywordType - TMM_KT_NC) & 0x0F) << 4);
+    TMM_DefineWord(l_Opcode);
+
+    // Evaluate the right expression. It should be a number.
+    TMM_Value* l_RightValue = TMM_Evaluate(p_SyntaxNode->m_RightExpr);
+    if (l_RightValue == NULL)
+    {
+        return false;
+    }
+
+    // Check the type of the evaluated right expression. It must evaluate to a number.
+    if (l_RightValue->m_Type != TMM_VT_NUMBER)
+    {
+        TM_error("The 'CALL' instruction requires a number as the right expression.");
+        TMM_DestroyValue(l_RightValue);
+        return false;
+    }
+
+    // Extract the integer part from the right value, then destroy the value.
+    uint32_t l_RightOperand = l_RightValue->m_IntegerPart & 0xFFFFFFFF;
+    TMM_DestroyValue(l_RightValue);
+
+    // Write the operand to the output buffer.
+    return TMM_DefineLong(l_RightOperand);
 }
 
 static bool TMM_EvaluateInstructionRST (const TMM_Syntax* p_SyntaxNode)
 {
-    return true;
+    // 0x240Y RST Y
+
+    // For the RST instruction, the left expression should be a number. Evaluate it.
+    TMM_Value* l_LeftValue = TMM_Evaluate(p_SyntaxNode->m_LeftExpr);
+    if (l_LeftValue == NULL)
+    {
+        return false;
+    }
+
+    // Check the type of the evaluated left expression. It must evaluate to a number.
+    if (l_LeftValue->m_Type != TMM_VT_NUMBER)
+    {
+        TM_error("The 'RST' instruction requires a number as the left expression.");
+        TMM_DestroyValue(l_LeftValue);
+        return false;
+    }
+
+    // Extract the integer part from the left value, correct it to 4 bits, then destroy the value.
+    uint8_t l_LeftOperand = (l_LeftValue->m_IntegerPart & 0x0F);
+    TMM_DestroyValue(l_LeftValue);
+
+    // Update the opcode for the instruction.
+    uint16_t l_Opcode = TM_INST_RST + l_LeftOperand;
+
+    // Write the opcode to the output buffer.
+    return TMM_DefineWord(l_Opcode);
 }
 
 static bool TMM_EvaluateInstructionRET (const TMM_Syntax* p_SyntaxNode)
 {
-    return true;
+    // 0x25X0 RET X
+
+    // For the RET instruction, the left expression must be an execution condition.
+    if (p_SyntaxNode->m_LeftExpr->m_Type != TMM_ST_CONDITION)
+    {
+        TM_error("The 'RET' instruction requires an execution condition as the left expression.");
+        return false;
+    }
+
+    // Set up the opcode for the instruction, then write it to the output buffer.
+    uint16_t l_Opcode = TM_INST_RET;
+    l_Opcode += (((p_SyntaxNode->m_LeftExpr->m_KeywordType - TMM_KT_NC) & 0x0F) << 4);
+    return TMM_DefineWord(l_Opcode);
 }
 
 static bool TMM_EvaluateInstructionRETI (const TMM_Syntax* p_SyntaxNode)
 {
-    return true;
+    // 0x2600 RETI
+    return TMM_DefineWord(0x2600);
 }
 
 static bool TMM_EvaluateInstructionJPS (const TMM_Syntax* p_SyntaxNode)
 {
-    return true;
+    // 0x2700 JPS
+    return TMM_DefineWord(0x2700);
 }
 
 static bool TMM_EvaluateInstructionINC (const TMM_Syntax* p_SyntaxNode)
 {
-    return true;
+    // 0x30X0 INC X
+    // 0x310Y INC [Y]
+
+    // For the INC instruction, the left expression could be either a register or a register
+    // pointer.
+    //
+    // Set up the opcode for the instruction.
+    uint16_t l_Opcode = TM_INST_INC;
+    switch (p_SyntaxNode->m_LeftExpr->m_Type)
+    {
+        case TMM_ST_REGISTER:
+            l_Opcode += (((p_SyntaxNode->m_LeftExpr->m_KeywordType - TMM_KT_A) & 0x0F) << 4);
+            return TMM_DefineWord(l_Opcode);
+        case TMM_ST_REGPTR:
+        {
+            TMM_KeywordType l_LeftKeywordType = p_SyntaxNode->m_LeftExpr->m_KeywordType;
+            l_LeftKeywordType -= TMM_KT_A;
+            if ((l_LeftKeywordType & 0b11) != 0)
+            {
+                TM_error("The 'INC [Y]' instruction requires a long register pointer as the left expression.");
+                return false;
+            }
+
+            l_Opcode += (0x0100 + (l_LeftKeywordType & 0xF));
+            return TMM_DefineWord(l_Opcode);
+        }
+        default:
+            TM_error("The 'INC' instruction requires a register or a register pointer as the left expression.");
+            return false;
+    }
 }
 
 static bool TMM_EvaluateInstructionDEC (const TMM_Syntax* p_SyntaxNode)
 {
-    return true;
+    // 0x32X0 DEC X
+    // 0x330Y DEC [Y]
+
+    // For the DEC instruction, the left expression could be either a register or a register
+    // pointer.
+    //
+    // Set up the opcode for the instruction.
+    uint16_t l_Opcode = TM_INST_DEC;
+
+    switch (p_SyntaxNode->m_LeftExpr->m_Type)
+    {
+        case TMM_ST_REGISTER:
+            l_Opcode += (((p_SyntaxNode->m_LeftExpr->m_KeywordType - TMM_KT_A) & 0x0F) << 4);
+            return TMM_DefineWord(l_Opcode);
+        case TMM_ST_REGPTR:
+        {
+            TMM_KeywordType l_LeftKeywordType = p_SyntaxNode->m_LeftExpr->m_KeywordType;
+            l_LeftKeywordType -= TMM_KT_A;
+            if ((l_LeftKeywordType & 0b11) != 0)
+            {
+                TM_error("The 'DEC [Y]' instruction requires a long register pointer as the left expression.");
+                return false;
+            }
+
+            l_Opcode += (0x0100 + (l_LeftKeywordType & 0xF));
+            return TMM_DefineWord(l_Opcode);
+        }
+        default:
+            TM_error("The 'DEC' instruction requires a register or a register pointer as the left expression.");
+            return false;
+    }
 }
 
 static bool TMM_EvaluateInstructionADD (const TMM_Syntax* p_SyntaxNode)
 {
-    return true;
+    // 0x34X0 ADD X, IMM
+    // 0x35XY ADD X, Y
+    // 0x36XY ADD X, [Y]
+
+    // For the ADD instruction, the left expression must be a register.
+    if (p_SyntaxNode->m_LeftExpr->m_Type != TMM_ST_REGISTER)
+    {
+        TM_error("The 'ADD' instruction requires a register as the left expression.");
+        return false;
+    }
+
+    // The register must be an accumulator register (A, AW, AH or AL).
+    TMM_KeywordType l_RegisterType = p_SyntaxNode->m_LeftExpr->m_KeywordType;
+    l_RegisterType -= TMM_KT_A;
+    if ((l_RegisterType & 0b1100) != 0)
+    {
+        TM_error("The 'ADD' instruction requires an accumulator register as the left expression.");
+        return false;
+    }
+
+    // Set up the opcode for the instruction.
+    uint16_t l_Opcode = TM_INST_ADD;
+    l_Opcode += ((l_RegisterType & 0x0F) << 4);
+
+    // Check the right expression's syntax type. Affect nibbles 0 and 1 of the opcode accordingly.
+    switch (p_SyntaxNode->m_RightExpr->m_Type)
+    {
+        case TMM_ST_REGISTER:
+        {
+            TMM_KeywordType l_RightKeywordType = p_SyntaxNode->m_RightExpr->m_KeywordType;
+            l_RightKeywordType -= TMM_KT_A;
+
+            l_Opcode += (0x0100 + (l_RightKeywordType & 0xF));
+            return TMM_DefineWord(l_Opcode);
+        }
+        case TMM_ST_REGPTR:
+        {
+            TMM_KeywordType l_RightKeywordType = p_SyntaxNode->m_RightExpr->m_KeywordType;
+            l_RightKeywordType -= TMM_KT_A;
+            if ((l_RightKeywordType & 0b11) != 0)
+            {
+                TM_error("The 'ADD X, [Y]' instruction requires a long register pointer as the right expression.");
+                return false;
+            }
+
+            l_Opcode += (0x0200 + (l_RightKeywordType & 0xF));
+            return TMM_DefineWord(l_Opcode);
+        }
+        default: break;
+    }
+
+    // Write the opcode to the output buffer.
+    TMM_DefineWord(l_Opcode);
+
+    // Evaluate the right expression. It should be a number.
+    TMM_Value* l_RightValue = TMM_Evaluate(p_SyntaxNode->m_RightExpr);
+    if (l_RightValue == NULL)
+    {
+        return false;
+    }
+
+    // Check the type of the evaluated right expression. It must evaluate to a number.
+    if (l_RightValue->m_Type != TMM_VT_NUMBER)
+    {
+        TM_error("The 'ADD' instruction requires a number as the right expression.");
+        TMM_DestroyValue(l_RightValue);
+        return false;
+    }
+
+    // Extract the integer part from the right value, then destroy the value.
+    uint32_t l_RightOperand = l_RightValue->m_IntegerPart & 0xFFFFFFFF;
+    TMM_DestroyValue(l_RightValue);
+
+    // Write the operand to the output buffer.
+    return TMM_DefineLong(l_RightOperand);
 }
 
 static bool TMM_EvaluateInstructionADC (const TMM_Syntax* p_SyntaxNode)
 {
-    return true;
+    // 0x37X0 ADC X, IMM
+    // 0x38XY ADC X, Y
+    // 0x39XY ADC X, [Y]
+
+    // For the ADC instruction, the left expression must be a register.
+    if (p_SyntaxNode->m_LeftExpr->m_Type != TMM_ST_REGISTER)
+    {
+        TM_error("The 'ADC' instruction requires a register as the left expression.");
+        return false;
+    }
+
+    // The register must be an accumulator register (A, AW, AH or AL).
+    TMM_KeywordType l_RegisterType = p_SyntaxNode->m_LeftExpr->m_KeywordType;
+    l_RegisterType -= TMM_KT_A;
+    if ((l_RegisterType & 0b1100) != 0)
+    {
+        TM_error("The 'ADC' instruction requires an accumulator register as the left expression.");
+        return false;
+    }
+
+    // Set up the opcode for the instruction.
+    uint16_t l_Opcode = TM_INST_ADC;
+    l_Opcode += ((l_RegisterType & 0x0F) << 4);
+
+    // Check the right expression's syntax type. Affect nibbles 0 and 1 of the opcode accordingly.
+    switch (p_SyntaxNode->m_RightExpr->m_Type)
+    {
+        case TMM_ST_REGISTER:
+        {
+            TMM_KeywordType l_RightKeywordType = p_SyntaxNode->m_RightExpr->m_KeywordType;
+            l_RightKeywordType -= TMM_KT_A;
+
+            l_Opcode += (0x0100 + (l_RightKeywordType & 0xF));
+            return TMM_DefineWord(l_Opcode);
+        }
+        case TMM_ST_REGPTR:
+        {
+            TMM_KeywordType l_RightKeywordType = p_SyntaxNode->m_RightExpr->m_KeywordType;
+            l_RightKeywordType -= TMM_KT_A;
+            if ((l_RightKeywordType & 0b11) != 0)
+            {
+                TM_error("The 'ADC X, [Y]' instruction requires a long register pointer as the right expression.");
+                return false;
+            }
+
+            l_Opcode += (0x0200 + (l_RightKeywordType & 0xF));
+            return TMM_DefineWord(l_Opcode);
+        }
+        default: break;
+    }
+
+    // Write the opcode to the output buffer.
+    TMM_DefineWord(l_Opcode);
+
+    // Evaluate the right expression. It should be a number.
+    TMM_Value* l_RightValue = TMM_Evaluate(p_SyntaxNode->m_RightExpr);
+    if (l_RightValue == NULL)
+    {
+        return false;
+    }
+
+    // Check the type of the evaluated right expression. It must evaluate to a number.
+    if (l_RightValue->m_Type != TMM_VT_NUMBER)
+    {
+        TM_error("The 'ADC' instruction requires a number as the right expression.");
+        TMM_DestroyValue(l_RightValue);
+        return false;
+    }
+
+    // Extract the integer part from the right value, then destroy the value.
+    uint32_t l_RightOperand = l_RightValue->m_IntegerPart & 0xFFFFFFFF;
+    TMM_DestroyValue(l_RightValue);
+
+    // Write the operand to the output buffer.
+    return TMM_DefineLong(l_RightOperand);
 }
 
 static bool TMM_EvaluateInstructionSUB (const TMM_Syntax* p_SyntaxNode)
 {
-    return true;
+    // 0x3AX0 SUB X, IMM
+    // 0x3BXY SUB X, Y
+    // 0x3CXY SUB X, [Y]
+
+    // For the SUB instruction, the left expression must be a register.
+    if (p_SyntaxNode->m_LeftExpr->m_Type != TMM_ST_REGISTER)
+    {
+        TM_error("The 'SUB' instruction requires a register as the left expression.");
+        return false;
+    }
+
+    // The register must be an accumulator register (A, AW, AH or AL).
+    TMM_KeywordType l_RegisterType = p_SyntaxNode->m_LeftExpr->m_KeywordType;
+    l_RegisterType -= TMM_KT_A;
+    if ((l_RegisterType & 0b1100) != 0)
+    {
+        TM_error("The 'SUB' instruction requires an accumulator register as the left expression.");
+        return false;
+    }
+
+    // Set up the opcode for the instruction.
+    uint16_t l_Opcode = TM_INST_SUB;
+    l_Opcode += ((l_RegisterType & 0x0F) << 4);
+
+    // Check the right expression's syntax type. Affect nibbles 0 and 1 of the opcode accordingly.
+    switch (p_SyntaxNode->m_RightExpr->m_Type)
+    {
+        case TMM_ST_REGISTER:
+        {
+            TMM_KeywordType l_RightKeywordType = p_SyntaxNode->m_RightExpr->m_KeywordType;
+            l_RightKeywordType -= TMM_KT_A;
+
+            l_Opcode += (0x0100 + (l_RightKeywordType & 0xF));
+            return TMM_DefineWord(l_Opcode);
+        }
+        case TMM_ST_REGPTR:
+        {
+            TMM_KeywordType l_RightKeywordType = p_SyntaxNode->m_RightExpr->m_KeywordType;
+            l_RightKeywordType -= TMM_KT_A;
+            if ((l_RightKeywordType & 0b11) != 0)
+            {
+                TM_error("The 'SUB X, [Y]' instruction requires a long register pointer as the right expression.");
+                return false;
+            }
+
+            l_Opcode += (0x0200 + (l_RightKeywordType & 0xF));
+            return TMM_DefineWord(l_Opcode);
+        }
+        default: break;
+    }
+
+    // Write the opcode to the output buffer.
+    TMM_DefineWord(l_Opcode);
+
+    // Evaluate the right expression. It should be a number.
+    TMM_Value* l_RightValue = TMM_Evaluate(p_SyntaxNode->m_RightExpr);
+    if (l_RightValue == NULL)
+    {
+        return false;
+    }
+
+    // Check the type of the evaluated right expression. It must evaluate to a number.
+    if (l_RightValue->m_Type != TMM_VT_NUMBER)
+    {
+        TM_error("The 'SUB' instruction requires a number as the right expression.");
+        TMM_DestroyValue(l_RightValue);
+        return false;
+    }
+
+    // Extract the integer part from the right value, then destroy the value.
+    uint32_t l_RightOperand = l_RightValue->m_IntegerPart & 0xFFFFFFFF;
+    TMM_DestroyValue(l_RightValue);
+
+    // Write the operand to the output buffer.
+    return TMM_DefineLong(l_RightOperand);
 }
 
 static bool TMM_EvaluateInstructionSBC (const TMM_Syntax* p_SyntaxNode)
-{
-    return true;
+{    
+    // 0x3DX0 SBC X, IMM
+    // 0x3EXY SBC X, Y
+    // 0x3FXY SBC X, [Y]
+
+    // For the SBC instruction, the left expression must be a register.
+    if (p_SyntaxNode->m_LeftExpr->m_Type != TMM_ST_REGISTER)
+    {
+        TM_error("The 'SBC' instruction requires a register as the left expression.");
+        return false;
+    }
+
+    // The register must be an accumulator register (A, AW, AH or AL).
+    TMM_KeywordType l_RegisterType = p_SyntaxNode->m_LeftExpr->m_KeywordType;
+    l_RegisterType -= TMM_KT_A;
+    if ((l_RegisterType & 0b1100) != 0)
+    {
+        TM_error("The 'SBC' instruction requires an accumulator register as the left expression.");
+        return false;
+    }
+
+    // Set up the opcode for the instruction.
+    uint16_t l_Opcode = TM_INST_SBC;
+    l_Opcode += ((l_RegisterType & 0x0F) << 4);
+
+    // Check the right expression's syntax type. Affect nibbles 0 and 1 of the opcode accordingly.
+    switch (p_SyntaxNode->m_RightExpr->m_Type)
+    {
+        case TMM_ST_REGISTER:
+        {
+            TMM_KeywordType l_RightKeywordType = p_SyntaxNode->m_RightExpr->m_KeywordType;
+            l_RightKeywordType -= TMM_KT_A;
+
+            l_Opcode += (0x0100 + (l_RightKeywordType & 0xF));
+            return TMM_DefineWord(l_Opcode);
+        }
+        case TMM_ST_REGPTR:
+        {
+            TMM_KeywordType l_RightKeywordType = p_SyntaxNode->m_RightExpr->m_KeywordType;
+            l_RightKeywordType -= TMM_KT_A;
+            if ((l_RightKeywordType & 0b11) != 0)
+            {
+                TM_error("The 'SBC X, [Y]' instruction requires a long register pointer as the right expression.");
+                return false;
+            }
+
+            l_Opcode += (0x0200 + (l_RightKeywordType & 0xF));
+            return TMM_DefineWord(l_Opcode);
+        }
+        default: break;
+    }
+
+    // Write the opcode to the output buffer.
+    TMM_DefineWord(l_Opcode);
+
+    // Evaluate the right expression. It should be a number.
+    TMM_Value* l_RightValue = TMM_Evaluate(p_SyntaxNode->m_RightExpr);
+    if (l_RightValue == NULL)
+    {
+        return false;
+    }
+
+    // Check the type of the evaluated right expression. It must evaluate to a number.
+    if (l_RightValue->m_Type != TMM_VT_NUMBER)
+    {
+        TM_error("The 'SBC' instruction requires a number as the right expression.");
+        TMM_DestroyValue(l_RightValue);
+        return false;
+    }
+
+    // Extract the integer part from the right value, then destroy the value.
+    uint32_t l_RightOperand = l_RightValue->m_IntegerPart & 0xFFFFFFFF;
+    TMM_DestroyValue(l_RightValue);
+
+    // Write the operand to the output buffer.
+    return TMM_DefineLong(l_RightOperand);
 }
 
 static bool TMM_EvaluateInstructionAND (const TMM_Syntax* p_SyntaxNode)
 {
-    return true;
+    // 0x40X0 AND X, IMM
+    // 0x41XY AND X, Y
+    // 0x42XY AND X, [Y]
+
+    // For the AND instruction, the left expression must be a register.
+    if (p_SyntaxNode->m_LeftExpr->m_Type != TMM_ST_REGISTER)
+    {
+        TM_error("The 'AND' instruction requires a register as the left expression.");
+        return false;
+    }
+
+    // The register must be an accumulator register (A, AW, AH or AL).
+    TMM_KeywordType l_RegisterType = p_SyntaxNode->m_LeftExpr->m_KeywordType;
+    l_RegisterType -= TMM_KT_A;
+    if ((l_RegisterType & 0b1100) != 0)
+    {
+        TM_error("The 'AND' instruction requires an accumulator register as the left expression.");
+        return false;
+    }
+
+    // Set up the opcode for the instruction.
+    uint16_t l_Opcode = TM_INST_AND;
+    l_Opcode += ((l_RegisterType & 0x0F) << 4);
+
+    // Check the right expression's syntax type. Affect nibbles 0 and 1 of the opcode accordingly.
+    switch (p_SyntaxNode->m_RightExpr->m_Type)
+    {
+        case TMM_ST_REGISTER:
+        {
+            TMM_KeywordType l_RightKeywordType = p_SyntaxNode->m_RightExpr->m_KeywordType;
+            l_RightKeywordType -= TMM_KT_A;
+
+            l_Opcode += (0x0100 + (l_RightKeywordType & 0xF));
+            return TMM_DefineWord(l_Opcode);
+        }
+        case TMM_ST_REGPTR:
+        {
+            TMM_KeywordType l_RightKeywordType = p_SyntaxNode->m_RightExpr->m_KeywordType;
+            l_RightKeywordType -= TMM_KT_A;
+            if ((l_RightKeywordType & 0b11) != 0)
+            {
+                TM_error("The 'AND X, [Y]' instruction requires a long register pointer as the right expression.");
+                return false;
+            }
+
+            l_Opcode += (0x0200 + (l_RightKeywordType & 0xF));
+            return TMM_DefineWord(l_Opcode);
+        }
+        default: break;
+    }
+
+    // Write the opcode to the output buffer.
+    TMM_DefineWord(l_Opcode);
+
+    // Evaluate the right expression. It should be a number.
+    TMM_Value* l_RightValue = TMM_Evaluate(p_SyntaxNode->m_RightExpr);
+    if (l_RightValue == NULL)
+    {
+        return false;
+    }
+
+    // Check the type of the evaluated right expression. It must evaluate to a number.
+    if (l_RightValue->m_Type != TMM_VT_NUMBER)
+    {
+        TM_error("The 'AND' instruction requires a number as the right expression.");
+        TMM_DestroyValue(l_RightValue);
+        return false;
+    }
+
+    // Extract the integer part from the right value, then destroy the value.
+    uint32_t l_RightOperand = l_RightValue->m_IntegerPart & 0xFFFFFFFF;
+    TMM_DestroyValue(l_RightValue);
+
+    // Write the operand to the output buffer.
+    return TMM_DefineLong(l_RightOperand);
 }
 
 static bool TMM_EvaluateInstructionOR (const TMM_Syntax* p_SyntaxNode)
 {
-    return true;
+    // 0x43X0 OR X, IMM
+    // 0x44XY OR X, Y
+    // 0x45XY OR X, [Y]
+
+    // For the OR instruction, the left expression must be a register.
+    if (p_SyntaxNode->m_LeftExpr->m_Type != TMM_ST_REGISTER)
+    {
+        TM_error("The 'OR' instruction requires a register as the left expression.");
+        return false;
+    }
+
+    // The register must be an accumulator register (A, AW, AH or AL).
+    TMM_KeywordType l_RegisterType = p_SyntaxNode->m_LeftExpr->m_KeywordType;
+    l_RegisterType -= TMM_KT_A;
+    if ((l_RegisterType & 0b1100) != 0)
+    {
+        TM_error("The 'OR' instruction requires an accumulator register as the left expression.");
+        return false;
+    }
+
+    // Set up the opcode for the instruction.
+    uint16_t l_Opcode = TM_INST_OR;
+    l_Opcode += ((l_RegisterType & 0x0F) << 4);
+
+    // Check the right expression's syntax type. Affect nibbles 0 and 1 of the opcode accordingly.
+    switch (p_SyntaxNode->m_RightExpr->m_Type)
+    {
+        case TMM_ST_REGISTER:
+        {
+            TMM_KeywordType l_RightKeywordType = p_SyntaxNode->m_RightExpr->m_KeywordType;
+            l_RightKeywordType -= TMM_KT_A;
+
+            l_Opcode += (0x0100 + (l_RightKeywordType & 0xF));
+            return TMM_DefineWord(l_Opcode);
+        }
+        case TMM_ST_REGPTR:
+        {
+            TMM_KeywordType l_RightKeywordType = p_SyntaxNode->m_RightExpr->m_KeywordType;
+            l_RightKeywordType -= TMM_KT_A;
+            if ((l_RightKeywordType & 0b11) != 0)
+            {
+                TM_error("The 'OR X, [Y]' instruction requires a long register pointer as the right expression.");
+                return false;
+            }
+
+            l_Opcode += (0x0200 + (l_RightKeywordType & 0xF));
+            return TMM_DefineWord(l_Opcode);
+        }
+        default: break;
+    }
+
+    // Write the opcode to the output buffer.
+    TMM_DefineWord(l_Opcode);
+
+    // Evaluate the right expression. It should be a number.
+    TMM_Value* l_RightValue = TMM_Evaluate(p_SyntaxNode->m_RightExpr);
+    if (l_RightValue == NULL)
+    {
+        return false;
+    }
+
+    // Check the type of the evaluated right expression. It must evaluate to a number.
+    if (l_RightValue->m_Type != TMM_VT_NUMBER)
+    {
+        TM_error("The 'OR' instruction requires a number as the right expression.");
+        TMM_DestroyValue(l_RightValue);
+        return false;
+    }
+
+    // Extract the integer part from the right value, then destroy the value.
+    uint32_t l_RightOperand = l_RightValue->m_IntegerPart & 0xFFFFFFFF;
+    TMM_DestroyValue(l_RightValue);
+
+    // Write the operand to the output buffer.
+    return TMM_DefineLong(l_RightOperand);
 }
 
 static bool TMM_EvaluateInstructionXOR (const TMM_Syntax* p_SyntaxNode)
 {
-    return true;
+    // 0x46X0 XOR X, IMM
+    // 0x47XY XOR X, Y
+    // 0x48XY XOR X, [Y]
+
+    // For the XOR instruction, the left expression must be a register.
+    if (p_SyntaxNode->m_LeftExpr->m_Type != TMM_ST_REGISTER)
+    {
+        TM_error("The 'XOR' instruction requires a register as the left expression.");
+        return false;
+    }
+
+    // The register must be an accumulator register (A, AW, AH or AL).
+    TMM_KeywordType l_RegisterType = p_SyntaxNode->m_LeftExpr->m_KeywordType;
+    l_RegisterType -= TMM_KT_A;
+    if ((l_RegisterType & 0b1100) != 0)
+    {
+        TM_error("The 'XOR' instruction requires an accumulator register as the left expression.");
+        return false;
+    }
+
+    // Set up the opcode for the instruction.
+    uint16_t l_Opcode = TM_INST_XOR;
+    l_Opcode += ((l_RegisterType & 0x0F) << 4);
+
+    // Check the right expression's syntax type. Affect nibbles 0 and 1 of the opcode accordingly.
+    switch (p_SyntaxNode->m_RightExpr->m_Type)
+    {
+        case TMM_ST_REGISTER:
+        {
+            TMM_KeywordType l_RightKeywordType = p_SyntaxNode->m_RightExpr->m_KeywordType;
+            l_RightKeywordType -= TMM_KT_A;
+
+            l_Opcode += (0x0100 + (l_RightKeywordType & 0xF));
+            return TMM_DefineWord(l_Opcode);
+        }
+        case TMM_ST_REGPTR:
+        {
+            TMM_KeywordType l_RightKeywordType = p_SyntaxNode->m_RightExpr->m_KeywordType;
+            l_RightKeywordType -= TMM_KT_A;
+            if ((l_RightKeywordType & 0b11) != 0)
+            {
+                TM_error("The 'XOR X, [Y]' instruction requires a long register pointer as the right expression.");
+                return false;
+            }
+
+            l_Opcode += (0x0200 + (l_RightKeywordType & 0xF));
+            return TMM_DefineWord(l_Opcode);
+        }
+        default: break;
+    }
+
+    // Write the opcode to the output buffer.
+    TMM_DefineWord(l_Opcode);
+
+    // Evaluate the right expression. It should be a number.
+    TMM_Value* l_RightValue = TMM_Evaluate(p_SyntaxNode->m_RightExpr);
+    if (l_RightValue == NULL)
+    {
+        return false;
+    }
+
+    // Check the type of the evaluated right expression. It must evaluate to a number.
+    if (l_RightValue->m_Type != TMM_VT_NUMBER)
+    {
+        TM_error("The 'XOR' instruction requires a number as the right expression.");
+        TMM_DestroyValue(l_RightValue);
+        return false;
+    }
+
+    // Extract the integer part from the right value, then destroy the value.
+    uint32_t l_RightOperand = l_RightValue->m_IntegerPart & 0xFFFFFFFF;
+    TMM_DestroyValue(l_RightValue);
+
+    // Write the operand to the output buffer.
+    return TMM_DefineLong(l_RightOperand);
 }
 
 static bool TMM_EvaluateInstructionNOT (const TMM_Syntax* p_SyntaxNode)
 {
-    return true;
+    // 0x49X0 NOT X
+    // 0x4A0Y NOT [Y]
+
+    // For the NOT instruction, the left expression could be either a register or a register
+    // pointer.
+    //
+    // Set up the opcode for the instruction.
+    uint16_t l_Opcode = TM_INST_NOT;
+
+    switch (p_SyntaxNode->m_LeftExpr->m_Type)
+    {
+        case TMM_ST_REGISTER:
+            l_Opcode += (((p_SyntaxNode->m_LeftExpr->m_KeywordType - TMM_KT_A) & 0x0F) << 4);
+            return TMM_DefineWord(l_Opcode);
+        case TMM_ST_REGPTR:
+        {
+            TMM_KeywordType l_LeftKeywordType = p_SyntaxNode->m_LeftExpr->m_KeywordType;
+            l_LeftKeywordType -= TMM_KT_A;
+            if ((l_LeftKeywordType & 0b11) != 0)
+            {
+                TM_error("The 'NOT [Y]' instruction requires a long register pointer as the left expression.");
+                return false;
+            }
+
+            l_Opcode += (0x0100 + (l_LeftKeywordType & 0xF));
+            return TMM_DefineWord(l_Opcode);
+        }
+        default:
+            TM_error("The 'NOT' instruction requires a register or a register pointer as the left expression.");
+            return false;
+    }
 }
 
 static bool TMM_EvaluateInstructionCMP (const TMM_Syntax* p_SyntaxNode)
 {
-    return true;
+    // 0x50X0 CMP X, IMM
+    // 0x51XY CMP X, Y
+    // 0x52XY CMP X, [Y]
+
+    // For the CMP instruction, the left expression must be a register.
+    if (p_SyntaxNode->m_LeftExpr->m_Type != TMM_ST_REGISTER)
+    {
+        TM_error("The 'CMP' instruction requires a register as the left expression.");
+        return false;
+    }
+
+    // The register must be an accumulator register (A, AW, AH or AL).
+    TMM_KeywordType l_RegisterType = p_SyntaxNode->m_LeftExpr->m_KeywordType;
+    l_RegisterType -= TMM_KT_A;
+    if ((l_RegisterType & 0b1100) != 0)
+    {
+        TM_error("The 'CMP' instruction requires an accumulator register as the left expression.");
+        return false;
+    }
+
+    // Set up the opcode for the instruction.
+    uint16_t l_Opcode = TM_INST_CMP;
+    l_Opcode += ((l_RegisterType & 0x0F) << 4);
+
+    // Check the right expression's syntax type. Affect nibbles 0 and 1 of the opcode accordingly.
+    switch (p_SyntaxNode->m_RightExpr->m_Type)
+    {
+        case TMM_ST_REGISTER:
+        {
+            TMM_KeywordType l_RightKeywordType = p_SyntaxNode->m_RightExpr->m_KeywordType;
+            l_RightKeywordType -= TMM_KT_A;
+
+            l_Opcode += (0x0100 + (l_RightKeywordType & 0xF));
+            return TMM_DefineWord(l_Opcode);
+        }
+        case TMM_ST_REGPTR:
+        {
+            TMM_KeywordType l_RightKeywordType = p_SyntaxNode->m_RightExpr->m_KeywordType;
+            l_RightKeywordType -= TMM_KT_A;
+            if ((l_RightKeywordType & 0b11) != 0)
+            {
+                TM_error("The 'CMP X, [Y]' instruction requires a long register pointer as the right expression.");
+                return false;
+            }
+
+            l_Opcode += (0x0200 + (l_RightKeywordType & 0xF));
+            return TMM_DefineWord(l_Opcode);
+        }
+        default: break;
+    }
+
+    // Write the opcode to the output buffer.
+    TMM_DefineWord(l_Opcode);
+
+    // Evaluate the right expression. It should be a number.
+    TMM_Value* l_RightValue = TMM_Evaluate(p_SyntaxNode->m_RightExpr);
+    if (l_RightValue == NULL)
+    {
+        return false;
+    }
+
+    // Check the type of the evaluated right expression. It must evaluate to a number.
+    if (l_RightValue->m_Type != TMM_VT_NUMBER)
+    {
+        TM_error("The 'CMP' instruction requires a number as the right expression.");
+        TMM_DestroyValue(l_RightValue);
+        return false;
+    }
+
+    // Extract the integer part from the right value, then destroy the value.
+    uint32_t l_RightOperand = l_RightValue->m_IntegerPart & 0xFFFFFFFF;
+    TMM_DestroyValue(l_RightValue);
+
+    // Write the operand to the output buffer.
+    return TMM_DefineLong(l_RightOperand);
 }
 
 static bool TMM_EvaluateInstructionSLA (const TMM_Syntax* p_SyntaxNode)
 {
-    return true;
+    // 0x60X0 SLA X
+    // 0x610Y SLA [Y]
+
+    // For the SLA instruction, the left expression could be either a register or a register
+    // pointer.
+    //
+    // Set up the opcode for the instruction.
+    uint16_t l_Opcode = TM_INST_SLA;
+
+    switch (p_SyntaxNode->m_LeftExpr->m_Type)
+    {
+        case TMM_ST_REGISTER:
+            l_Opcode += (((p_SyntaxNode->m_LeftExpr->m_KeywordType - TMM_KT_A) & 0x0F) << 4);
+            return TMM_DefineWord(l_Opcode);
+        case TMM_ST_REGPTR:
+        {
+            TMM_KeywordType l_LeftKeywordType = p_SyntaxNode->m_LeftExpr->m_KeywordType;
+            l_LeftKeywordType -= TMM_KT_A;
+            if ((l_LeftKeywordType & 0b11) != 0)
+            {
+                TM_error("The 'SLA [Y]' instruction requires a long register pointer as the left expression.");
+                return false;
+            }
+
+            l_Opcode += (0x0100 + (l_LeftKeywordType & 0xF));
+            return TMM_DefineWord(l_Opcode);
+        }
+        default:
+            TM_error("The 'SLA' instruction requires a register or a register pointer as the left expression.");
+            return false;
+    }
 }
 
 static bool TMM_EvaluateInstructionSRA (const TMM_Syntax* p_SyntaxNode)
 {
-    return true;
+    // 0x62X0 SRA X
+    // 0x630Y SRA [Y]
+
+    // For the SRA instruction, the left expression could be either a register or a register
+    // pointer.
+    //
+    // Set up the opcode for the instruction.
+    uint16_t l_Opcode = TM_INST_SRA;
+
+    switch (p_SyntaxNode->m_LeftExpr->m_Type)
+    {
+        case TMM_ST_REGISTER:
+            l_Opcode += (((p_SyntaxNode->m_LeftExpr->m_KeywordType - TMM_KT_A) & 0x0F) << 4);
+            return TMM_DefineWord(l_Opcode);
+        case TMM_ST_REGPTR:
+        {
+            TMM_KeywordType l_LeftKeywordType = p_SyntaxNode->m_LeftExpr->m_KeywordType;
+            l_LeftKeywordType -= TMM_KT_A;
+            if ((l_LeftKeywordType & 0b11) != 0)
+            {
+                TM_error("The 'SRA [Y]' instruction requires a long register pointer as the left expression.");
+                return false;
+            }
+
+            l_Opcode += (0x0100 + (l_LeftKeywordType & 0xF));
+            return TMM_DefineWord(l_Opcode);
+        }
+        default:
+            TM_error("The 'SRA' instruction requires a register or a register pointer as the left expression.");
+            return false;
+    }
 }
 
 static bool TMM_EvaluateInstructionSRL (const TMM_Syntax* p_SyntaxNode)
 {
-    return true;
+    // 0x64X0 SRL X
+    // 0x650Y SRL [Y]
+
+    // For the SRL instruction, the left expression could be either a register or a register
+    // pointer.
+    //
+    // Set up the opcode for the instruction.
+    uint16_t l_Opcode = TM_INST_SRL;
+
+    switch (p_SyntaxNode->m_LeftExpr->m_Type)
+    {
+        case TMM_ST_REGISTER:
+            l_Opcode += (((p_SyntaxNode->m_LeftExpr->m_KeywordType - TMM_KT_A) & 0x0F) << 4);
+            return TMM_DefineWord(l_Opcode);
+        case TMM_ST_REGPTR:
+        {
+            TMM_KeywordType l_LeftKeywordType = p_SyntaxNode->m_LeftExpr->m_KeywordType;
+            l_LeftKeywordType -= TMM_KT_A;
+            if ((l_LeftKeywordType & 0b11) != 0)
+            {
+                TM_error("The 'SRL [Y]' instruction requires a long register pointer as the left expression.");
+                return false;
+            }
+
+            l_Opcode += (0x0100 + (l_LeftKeywordType & 0xF));
+            return TMM_DefineWord(l_Opcode);
+        }
+        default:
+            TM_error("The 'SRL' instruction requires a register or a register pointer as the left expression.");
+            return false;
+    }
 }
 
 static bool TMM_EvaluateInstructionRL (const TMM_Syntax* p_SyntaxNode)
 {
-    return true;
+    // 0x66X0 RL X
+    // 0x670Y RL [Y]
+
+    // For the RL instruction, the left expression could be either a register or a register
+    // pointer.
+    //
+    // Set up the opcode for the instruction.
+    uint16_t l_Opcode = TM_INST_RL;
+
+    switch (p_SyntaxNode->m_LeftExpr->m_Type)
+    {
+        case TMM_ST_REGISTER:
+            l_Opcode += (((p_SyntaxNode->m_LeftExpr->m_KeywordType - TMM_KT_A) & 0x0F) << 4);
+            return TMM_DefineWord(l_Opcode);
+        case TMM_ST_REGPTR:
+        {
+            TMM_KeywordType l_LeftKeywordType = p_SyntaxNode->m_LeftExpr->m_KeywordType;
+            l_LeftKeywordType -= TMM_KT_A;
+            if ((l_LeftKeywordType & 0b11) != 0)
+            {
+                TM_error("The 'RL [Y]' instruction requires a long register pointer as the left expression.");
+                return false;
+            }
+
+            l_Opcode += (0x0100 + (l_LeftKeywordType & 0xF));
+            return TMM_DefineWord(l_Opcode);
+        }
+        default:
+            TM_error("The 'RL' instruction requires a register or a register pointer as the left expression.");
+            return false;
+    }
 }
 
 static bool TMM_EvaluateInstructionRLC (const TMM_Syntax* p_SyntaxNode)
 {
-    return true;
+    // 0x68X0 RLC X
+    // 0x690Y RLC [Y]
+
+    // For the RLC instruction, the left expression could be either a register or a register
+    // pointer.
+    //
+    // Set up the opcode for the instruction.
+    uint16_t l_Opcode = TM_INST_RLC;
+
+    switch (p_SyntaxNode->m_LeftExpr->m_Type)
+    {
+        case TMM_ST_REGISTER:
+            l_Opcode += (((p_SyntaxNode->m_LeftExpr->m_KeywordType - TMM_KT_A) & 0x0F) << 4);
+            return TMM_DefineWord(l_Opcode);
+        case TMM_ST_REGPTR:
+        {
+            TMM_KeywordType l_LeftKeywordType = p_SyntaxNode->m_LeftExpr->m_KeywordType;
+            l_LeftKeywordType -= TMM_KT_A;
+            if ((l_LeftKeywordType & 0b11) != 0)
+            {
+                TM_error("The 'RLC [Y]' instruction requires a long register pointer as the left expression.");
+                return false;
+            }
+
+            l_Opcode += (0x0100 + (l_LeftKeywordType & 0xF));
+            return TMM_DefineWord(l_Opcode);
+        }
+        default:
+            TM_error("The 'RLC' instruction requires a register or a register pointer as the left expression.");
+            return false;
+    }
 }
 
 static bool TMM_EvaluateInstructionRR (const TMM_Syntax* p_SyntaxNode)
 {
-    return true;
+    // 0x6AX0 RR X
+    // 0x6B0Y RR [Y]
+
+    // For the RR instruction, the left expression could be either a register or a register
+    // pointer.
+    //
+    // Set up the opcode for the instruction.
+    uint16_t l_Opcode = TM_INST_RR;
+
+    switch (p_SyntaxNode->m_LeftExpr->m_Type)
+    {
+        case TMM_ST_REGISTER:
+            l_Opcode += (((p_SyntaxNode->m_LeftExpr->m_KeywordType - TMM_KT_A) & 0x0F) << 4);
+            return TMM_DefineWord(l_Opcode);
+        case TMM_ST_REGPTR:
+        {
+            TMM_KeywordType l_LeftKeywordType = p_SyntaxNode->m_LeftExpr->m_KeywordType;
+            l_LeftKeywordType -= TMM_KT_A;
+            if ((l_LeftKeywordType & 0b11) != 0)
+            {
+                TM_error("The 'RR [Y]' instruction requires a long register pointer as the left expression.");
+                return false;
+            }
+
+            l_Opcode += (0x0100 + (l_LeftKeywordType & 0xF));
+            return TMM_DefineWord(l_Opcode);
+        }
+        default:
+            TM_error("The 'RR' instruction requires a register or a register pointer as the left expression.");
+            return false;
+    }
 }
 
 static bool TMM_EvaluateInstructionRRC (const TMM_Syntax* p_SyntaxNode)
 {
-    return true;
+    // 0x6CX0 RRC X
+    // 0x6D0Y RRC [Y]
+
+    // For the RRC instruction, the left expression could be either a register or a register
+    // pointer.
+    //
+    // Set up the opcode for the instruction.
+    uint16_t l_Opcode = TM_INST_RRC;
+
+    switch (p_SyntaxNode->m_LeftExpr->m_Type)
+    {
+        case TMM_ST_REGISTER:
+            l_Opcode += (((p_SyntaxNode->m_LeftExpr->m_KeywordType - TMM_KT_A) & 0x0F) << 4);
+            return TMM_DefineWord(l_Opcode);
+        case TMM_ST_REGPTR:
+        {
+            TMM_KeywordType l_LeftKeywordType = p_SyntaxNode->m_LeftExpr->m_KeywordType;
+            l_LeftKeywordType -= TMM_KT_A;
+            if ((l_LeftKeywordType & 0b11) != 0)
+            {
+                TM_error("The 'RRC [Y]' instruction requires a long register pointer as the left expression.");
+                return false;
+            }
+
+            l_Opcode += (0x0100 + (l_LeftKeywordType & 0xF));
+            return TMM_DefineWord(l_Opcode);
+        }
+        default:
+            TM_error("The 'RRC' instruction requires a register or a register pointer as the left expression.");
+            return false;
+    }
 }
 
 static bool TMM_EvaluateInstructionBIT (const TMM_Syntax* p_SyntaxNode)
 {
-    return true;
+    // 0x700Y BIT IMM, Y
+    // 0x710Y BIT IMM, [Y]
+
+    // Prepare the opcode for the instruction.
+    uint16_t l_Opcode = TM_INST_BIT;
+
+    // Check the right expression's syntax type. Affect nibbles 0 and 1 of the opcode accordingly.
+    switch (p_SyntaxNode->m_RightExpr->m_Type)
+    {
+        case TMM_ST_REGISTER:
+        {
+            TMM_KeywordType l_RightKeywordType = p_SyntaxNode->m_RightExpr->m_KeywordType;
+            l_RightKeywordType -= TMM_KT_A;
+
+            l_Opcode += (l_RightKeywordType & 0xF);
+            break;
+        }
+        case TMM_ST_REGPTR:
+        {
+            TMM_KeywordType l_RightKeywordType = p_SyntaxNode->m_RightExpr->m_KeywordType;
+            l_RightKeywordType -= TMM_KT_A;
+            if ((l_RightKeywordType & 0b11) != 0)
+            {
+                TM_error("The 'BIT IMM, [Y]' instruction requires a long register pointer as the right expression.");
+                return false;
+            }
+
+            l_Opcode += (0x0100 + (l_RightKeywordType & 0xF));
+            break;
+        }
+        default: break;
+    }
+
+    // Write the opcode to the output buffer.
+    TMM_DefineWord(l_Opcode);
+
+    // Evaluate the left expression. It should be a number.
+    TMM_Value* l_LeftValue = TMM_Evaluate(p_SyntaxNode->m_LeftExpr);
+    if (l_LeftValue == NULL)
+    {
+        return false;
+    }
+
+    // Check the type of the evaluated left expression. It must evaluate to a number.
+    if (l_LeftValue->m_Type != TMM_VT_NUMBER)
+    {
+        TM_error("The 'BIT' instruction requires a number as the left expression.");
+        TMM_DestroyValue(l_LeftValue);
+        return false;
+    }
+
+    // Extract the integer part from the left value, then destroy the value.
+    uint32_t l_LeftOperand = l_LeftValue->m_IntegerPart & 0xFF;
+    TMM_DestroyValue(l_LeftValue);
+
+    // Write the operand to the output buffer.
+    return TMM_DefineByte(l_LeftOperand);
 }
 
 static bool TMM_EvaluateInstructionRES (const TMM_Syntax* p_SyntaxNode)
 {
-    return true;
+    // 0x720Y RES IMM, Y
+    // 0x730Y RES IMM, [Y]
+
+    // Prepare the opcode for the instruction.
+    uint16_t l_Opcode = TM_INST_RES;
+
+    // Check the right expression's syntax type. Affect nibbles 0 and 1 of the opcode accordingly.
+    switch (p_SyntaxNode->m_RightExpr->m_Type)
+    {
+        case TMM_ST_REGISTER:
+        {
+            TMM_KeywordType l_RightKeywordType = p_SyntaxNode->m_RightExpr->m_KeywordType;
+            l_RightKeywordType -= TMM_KT_A;
+
+            l_Opcode += (l_RightKeywordType & 0xF);
+            break;
+        }
+        case TMM_ST_REGPTR:
+        {
+            TMM_KeywordType l_RightKeywordType = p_SyntaxNode->m_RightExpr->m_KeywordType;
+            l_RightKeywordType -= TMM_KT_A;
+            if ((l_RightKeywordType & 0b11) != 0)
+            {
+                TM_error("The 'RES IMM, [Y]' instruction requires a long register pointer as the right expression.");
+                return false;
+            }
+
+            l_Opcode += (0x0100 + (l_RightKeywordType & 0xF));
+            break;
+        }
+        default: break;
+    }
+
+    // Write the opcode to the output buffer.
+    TMM_DefineWord(l_Opcode);
+
+    // Evaluate the left expression. It should be a number.
+    TMM_Value* l_LeftValue = TMM_Evaluate(p_SyntaxNode->m_LeftExpr);
+    if (l_LeftValue == NULL)
+    {
+        return false;
+    }
+
+    // Check the type of the evaluated left expression. It must evaluate to a number.
+    if (l_LeftValue->m_Type != TMM_VT_NUMBER)
+    {
+        TM_error("The 'RES' instruction requires a number as the left expression.");
+        TMM_DestroyValue(l_LeftValue);
+        return false;
+    }
+
+    // Extract the integer part from the left value, then destroy the value.
+    uint32_t l_LeftOperand = l_LeftValue->m_IntegerPart & 0xFF;
+    TMM_DestroyValue(l_LeftValue);
+
+    // Write the operand to the output buffer.
+    return TMM_DefineByte(l_LeftOperand);
 }
 
 static bool TMM_EvaluateInstructionSET (const TMM_Syntax* p_SyntaxNode)
 {
-    return true;
+    // 0x740Y SET IMM, Y
+    // 0x750Y SET IMM, [Y]
+
+    // Prepare the opcode for the instruction.
+    uint16_t l_Opcode = TM_INST_SET;
+
+    // Check the right expression's syntax type. Affect nibbles 0 and 1 of the opcode accordingly.
+    switch (p_SyntaxNode->m_RightExpr->m_Type)
+    {
+        case TMM_ST_REGISTER:
+        {
+            TMM_KeywordType l_RightKeywordType = p_SyntaxNode->m_RightExpr->m_KeywordType;
+            l_RightKeywordType -= TMM_KT_A;
+
+            l_Opcode += (l_RightKeywordType & 0xF);
+            break;
+        }
+        case TMM_ST_REGPTR:
+        {
+            TMM_KeywordType l_RightKeywordType = p_SyntaxNode->m_RightExpr->m_KeywordType;
+            l_RightKeywordType -= TMM_KT_A;
+            if ((l_RightKeywordType & 0b11) != 0)
+            {
+                TM_error("The 'SET IMM, [Y]' instruction requires a long register pointer as the right expression.");
+                return false;
+            }
+
+            l_Opcode += (0x0100 + (l_RightKeywordType & 0xF));
+            break;
+        }
+        default: break;
+    }
+
+    // Write the opcode to the output buffer.
+    TMM_DefineWord(l_Opcode);
+
+    // Evaluate the left expression. It should be a number.
+    TMM_Value* l_LeftValue = TMM_Evaluate(p_SyntaxNode->m_LeftExpr);
+    if (l_LeftValue == NULL)
+    {
+        return false;
+    }
+
+    // Check the type of the evaluated left expression. It must evaluate to a number.
+    if (l_LeftValue->m_Type != TMM_VT_NUMBER)
+    {
+        TM_error("The 'SET' instruction requires a number as the left expression.");
+        TMM_DestroyValue(l_LeftValue);
+        return false;
+    }
+
+    // Extract the integer part from the left value, then destroy the value.
+    uint32_t l_LeftOperand = l_LeftValue->m_IntegerPart & 0xFF;
+    TMM_DestroyValue(l_LeftValue);
+
+    // Write the operand to the output buffer.
+    return TMM_DefineByte(l_LeftOperand);
 }
 
 static bool TMM_EvaluateInstructionSWAP (const TMM_Syntax* p_SyntaxNode)
 {
-    return true;
+    // 0x76X0 SWAP X
+    // 0x770Y SWAP [Y]
+
+    // For the SWAP instruction, the left expression could be either a register or a register
+    // pointer.
+    //
+    // Set up the opcode for the instruction.
+    uint16_t l_Opcode = TM_INST_SWAP;
+
+    switch (p_SyntaxNode->m_LeftExpr->m_Type)
+    {
+        case TMM_ST_REGISTER:
+            l_Opcode += (((p_SyntaxNode->m_LeftExpr->m_KeywordType - TMM_KT_A) & 0x0F) << 4);
+            return TMM_DefineWord(l_Opcode);
+        case TMM_ST_REGPTR:
+        {
+            TMM_KeywordType l_LeftKeywordType = p_SyntaxNode->m_LeftExpr->m_KeywordType;
+            l_LeftKeywordType -= TMM_KT_A;
+            if ((l_LeftKeywordType & 0b11) != 0)
+            {
+                TM_error("The 'SWAP [Y]' instruction requires a long register pointer as the left expression.");
+                return false;
+            }
+
+            l_Opcode += (0x0100 + (l_LeftKeywordType & 0xF));
+            return TMM_DefineWord(l_Opcode);
+        }
+        default:
+            TM_error("The 'SWAP' instruction requires a register or a register pointer as the left expression.");
+            return false;
+    }
 }
 
 // Static Functions - Evaluation ///////////////////////////////////////////////////////////////////
@@ -1521,7 +2803,7 @@ static TMM_Value* TMM_EvaluateIdentifier (const TMM_Syntax* p_SyntaxNode)
     }
     else
     {
-        l_Label->m_References[l_Label->m_ReferenceCount++] = s_Builder.m_OutputSize;
+        l_Label->m_References[l_Label->m_ReferenceCount++] = s_Builder.m_ROMCursor;
     }
     
     // Return a number value with the address of the label if it has been resolved.
@@ -1567,7 +2849,7 @@ static TMM_Value* TMM_EvaluateLabel (const TMM_Syntax* p_SyntaxNode)
         l_Label->m_ReferenceCapacity = TMM_BUILDER_INITIAL_CAPACITY;
         
         // Label is resolved to...
-        // - ...the current output size if the cursor is in ROM.
+        // - ...the current ROM cursor if the cursor is in ROM.
         // - ...the current RAM cursor if the cursor is in RAM.
         if (s_Builder.m_CursorInRAM == true)
         {
@@ -1575,7 +2857,7 @@ static TMM_Value* TMM_EvaluateLabel (const TMM_Syntax* p_SyntaxNode)
         }
         else
         {
-            l_Label->m_Address = s_Builder.m_OutputSize;
+            l_Label->m_Address = s_Builder.m_ROMCursor;
         }
 
         l_Label->m_Resolved = true;
@@ -1583,7 +2865,7 @@ static TMM_Value* TMM_EvaluateLabel (const TMM_Syntax* p_SyntaxNode)
     else
     {
         // Set the label's resolved address to...
-        // - ...the current output size if the cursor is in ROM.
+        // - ...the current ROM cursor if the cursor is in ROM.
         // - ...the current RAM cursor if the cursor is in RAM.
         if (s_Builder.m_CursorInRAM == true)
         {
@@ -1591,7 +2873,7 @@ static TMM_Value* TMM_EvaluateLabel (const TMM_Syntax* p_SyntaxNode)
         }
         else
         {
-            l_Label->m_Address = s_Builder.m_OutputSize;
+            l_Label->m_Address = s_Builder.m_ROMCursor;
         }
 
         // Has the label not been resolved?
@@ -1602,7 +2884,6 @@ static TMM_Value* TMM_EvaluateLabel (const TMM_Syntax* p_SyntaxNode)
             for (size_t i = 0; i < l_Label->m_ReferenceCount; ++i)
             {
                 uint32_t l_Reference = l_Label->m_References[i];
-                printf("Writing %u to %u\n", l_Label->m_Address, l_Reference);
                 
                 // Write the label's address to the output buffer.
                 s_Builder.m_Output[l_Reference] = l_Label->m_Address & 0xFF;
@@ -1637,7 +2918,7 @@ static TMM_Value* TMM_EvaluateData (const TMM_Syntax* p_SyntaxNode)
                 {
                     if (l_Value->m_IntegerPart > 0xFF)
                     {
-                        TM_warn("Value '%lu' is too large to fit in a byte, and will be truncated.", l_Value->m_IntegerPart);
+                        TM_warn("Value '%u' is too large to fit in a byte, and will be truncated.", l_Value->m_IntegerPart);
                     }
 
                     if (TMM_DefineByte(l_Value->m_IntegerPart & 0xFF) == false)
@@ -1689,7 +2970,7 @@ static TMM_Value* TMM_EvaluateData (const TMM_Syntax* p_SyntaxNode)
                 {
                     if (l_Value->m_IntegerPart > 0xFFFF)
                     {
-                        TM_warn("Value '%lu' is too large to fit in a word, and will be truncated.", l_Value->m_IntegerPart);
+                        TM_warn("Value '%u' is too large to fit in a word, and will be truncated.", l_Value->m_IntegerPart);
                     }
 
                     if (TMM_DefineWord(l_Value->m_IntegerPart & 0xFFFF) == false)
@@ -1723,7 +3004,7 @@ static TMM_Value* TMM_EvaluateData (const TMM_Syntax* p_SyntaxNode)
                 // Check the type of the value. It must be a number.
                 if (l_Value->m_Type == TMM_VT_NUMBER)
                 {
-                    if (TMM_DefineLong(l_Value->m_IntegerPart & 0xFFFFFFFF) == false)
+                    if (TMM_DefineLong(l_Value->m_IntegerPart) == false)
                     {
                         TMM_DestroyValue(l_Value);
                         return NULL;
@@ -1788,7 +3069,7 @@ static TMM_Value* TMM_EvaluateData (const TMM_Syntax* p_SyntaxNode)
                     {
                         if (l_Value->m_IntegerPart > 0xFF)
                         {
-                            TM_warn("Value '%lu' is too large to fit in a byte, and will be truncated.", l_Value->m_IntegerPart);
+                            TM_warn("Value '%u' is too large to fit in a byte, and will be truncated.", l_Value->m_IntegerPart);
                         }
 
                         if (TMM_DefineByte(l_Value->m_IntegerPart & 0xFF) == false)
@@ -2185,6 +3466,14 @@ TMM_Value* TMM_EvaluateIncludeStatement (const TMM_Syntax* p_SyntaxNode)
     {
         TMM_DestroyValue(l_StringValue);
         return NULL;
+    }
+
+    // At this point, if the lexer is empty, then the file is either empty or has already been
+    // lexed. In either case, we can safely return.
+    if (TMM_HasMoreTokens() == false)
+    {
+        TMM_DestroyValue(l_StringValue);
+        return TMM_CreateVoidValue();
     }
 
     // Parse the lexed tokens.
