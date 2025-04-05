@@ -1,3 +1,1 @@
-push c
-mv b, a
-pop b
+ld a, $00

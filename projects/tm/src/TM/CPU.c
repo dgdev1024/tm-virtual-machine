@@ -2565,19 +2565,19 @@ void TM_CycleCPU (TM_CPU* p_CPU, uint32_t p_Cycles)
     }
 }
 
-void TM_StepCPU (TM_CPU* p_CPU)
+bool TM_StepCPU (TM_CPU* p_CPU)
 {
     // Ensure the given CPU instance is valid.
     if (p_CPU == NULL)
     {
         fprintf(stderr, "TM: Cannot step CPU instance - invalid CPU instance.\n");
-        return;
+        return false;
     }
 
     // If the CPU is stopped, do nothing.
     if (p_CPU->m_Stop)
     {
-        return;
+        return false;
     }
 
     // If the CPU is halted, wait for an interrupt to be requested.
@@ -2602,7 +2602,7 @@ void TM_StepCPU (TM_CPU* p_CPU)
         {
             TM_SetErrorCode(p_CPU, TM_EC_BAD_EXECUTE);
             p_CPU->m_EA = p_CPU->m_IA;
-            return;
+            return false;
         }
 
         // Read the instruction's 16-bit opcode from the bus at the instruction address.
@@ -2708,12 +2708,12 @@ void TM_StepCPU (TM_CPU* p_CPU)
             default:
                 TM_SetErrorCode(p_CPU, TM_EC_INVALID_OPCODE);
                 p_CPU->m_EA = p_CPU->m_IA;
-                return;
+                return false;
         }
 
         if (l_Good == false)
         {
-            return;
+            return false;
         }
     }
 
@@ -2729,9 +2729,11 @@ void TM_StepCPU (TM_CPU* p_CPU)
         p_CPU->m_IME = true;
         p_CPU->m_EI = false;
     }
+
+    return true;
 }
 
-uint8_t TM_ReadByte (TM_CPU* p_CPU, uint32_t p_Address)
+uint8_t TM_ReadByte (const TM_CPU* p_CPU, uint32_t p_Address)
 {
     // Ensure the given CPU instance, and its bus read function pointer, are valid.
     if (p_CPU == NULL || p_CPU->m_BusRead == NULL)
@@ -2745,7 +2747,7 @@ uint8_t TM_ReadByte (TM_CPU* p_CPU, uint32_t p_Address)
     return l_Byte0;
 }
 
-uint16_t TM_ReadWord (TM_CPU* p_CPU, uint32_t p_Address)
+uint16_t TM_ReadWord (const TM_CPU* p_CPU, uint32_t p_Address)
 {
     // Ensure the given CPU instance, and its bus read function pointer, are valid.
     if (p_CPU == NULL || p_CPU->m_BusRead == NULL)
@@ -2761,7 +2763,7 @@ uint16_t TM_ReadWord (TM_CPU* p_CPU, uint32_t p_Address)
     return (l_Word0 | (l_Word1 << 8));
 }
 
-uint32_t TM_ReadDoubleWord (TM_CPU* p_CPU, uint32_t p_Address)
+uint32_t TM_ReadDoubleWord (const TM_CPU* p_CPU, uint32_t p_Address)
 {
     // Ensure the given CPU instance, and its bus read function pointer, are valid.
     if (p_CPU == NULL || p_CPU->m_BusRead == NULL)

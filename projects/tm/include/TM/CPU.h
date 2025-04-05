@@ -78,8 +78,10 @@ void TM_CycleCPU (TM_CPU* p_CPU, uint32_t p_Cycles);
  *          requested if the CPU is halted.
  * 
  * @param   p_CPU     The TM CPU instance to step.
+ * 
+ * @return  `true` if the CPU was stepped successfully; `false` if the CPU has been or is stopped.
  */
-void TM_StepCPU (TM_CPU* p_CPU);
+bool TM_StepCPU (TM_CPU* p_CPU);
 
 /**
  * @brief   Reads a byte from the bus at the specified address.
@@ -87,7 +89,7 @@ void TM_StepCPU (TM_CPU* p_CPU);
  * @param   p_Address The address to read from.
  * @return  The byte read from the bus.
  */
-uint8_t TM_ReadByte (TM_CPU* p_CPU, uint32_t p_Address);
+uint8_t TM_ReadByte (const TM_CPU* p_CPU, uint32_t p_Address);
 
 /**
  * @brief   Reads a word from the bus at the specified address.
@@ -95,7 +97,7 @@ uint8_t TM_ReadByte (TM_CPU* p_CPU, uint32_t p_Address);
  * @param   p_Address The address to read from.
  * @return  The word read from the bus.
  */
-uint16_t TM_ReadWord (TM_CPU* p_CPU, uint32_t p_Address);
+uint16_t TM_ReadWord (const TM_CPU* p_CPU, uint32_t p_Address);
 
 /**
  * @brief   Reads a double word from the bus at the specified address.
@@ -103,7 +105,7 @@ uint16_t TM_ReadWord (TM_CPU* p_CPU, uint32_t p_Address);
  * @param   p_Address The address to read from.
  * @return  The double word read from the bus.
  */
-uint32_t TM_ReadDoubleWord (TM_CPU* p_CPU, uint32_t p_Address);
+uint32_t TM_ReadDoubleWord (const TM_CPU* p_CPU, uint32_t p_Address);
 
 /**
  * @brief   Writes a byte to the bus at the specified address.
