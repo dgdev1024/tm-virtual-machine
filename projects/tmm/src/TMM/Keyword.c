@@ -41,6 +41,7 @@ static const TMM_Keyword TMM_KEYWORD_TABLE[] = {
     { "ENDR",       TMM_KT_ENDR,        0 },
     { "ENDC",       TMM_KT_ENDC,        0 },
     { "ENDIF",      TMM_KT_ENDC,        0 },
+    { "RETURN",     TMM_KT_RETURN,      0 },
     { "A",          TMM_KT_A,           0 },
     { "AW",         TMM_KT_AW,          0 },
     { "AH",         TMM_KT_AH,          0 },

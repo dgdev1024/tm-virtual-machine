@@ -39,6 +39,7 @@ typedef enum TMM_KeywordType
     TMM_KT_ELSE,                    ///< @brief "Else" keyword (eg. `else`).
     TMM_KT_ENDR,                    ///< @brief "End Repeat", "End For" keyword (eg. `endr`).
     TMM_KT_ENDC,                    ///< @brief "End If" keyword (eg. `endc`).
+    TMM_KT_RETURN,                  ///< @brief "Return" keyword (eg. `return`).
 
     // Registers
     TMM_KT_A,

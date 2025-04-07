@@ -10,7 +10,7 @@
 
 #define TMM_BUILDER_INITIAL_CAPACITY 8
 #define TMM_BUILDER_OUTPUT_CAPACITY 0x4000
-#define TMM_BUILDER_CALL_STACK_SIZE 32
+#define TMM_BUILDER_CALL_STACK_SIZE 256
 
 // Label Structure /////////////////////////////////////////////////////////////////////////////////
 
@@ -2961,7 +2961,6 @@ static TMM_Value* TMM_EvaluateData (const TMM_Syntax* p_SyntaxNode)
                 else
                 {
                     TM_error("Unexpected value type in 'db' statement.");
-                    TMM_DestroyValue(l_Value);
                     return NULL;
                 }
 
@@ -3279,7 +3278,6 @@ static TMM_Value* TMM_EvaluateMacroCall (const TMM_Syntax* p_SyntaxNode)
 
     // Set up the macro call context.
     TMM_MacroCall* l_Call = TMM_CreateMacroCall(p_SyntaxNode->m_BodySize);
-    s_Builder.m_MacroCallStack[s_Builder.m_MacroCallStackIndex++] = l_Call;
 
     // Evaluate the macro call's arguments.
     for (size_t i = 0; i < p_SyntaxNode->m_BodySize; ++i)
@@ -3288,12 +3286,14 @@ static TMM_Value* TMM_EvaluateMacroCall (const TMM_Syntax* p_SyntaxNode)
         if (l_Value == NULL)
         {
             TMM_DestroyMacroCall(l_Call);
-            s_Builder.m_MacroCallStack[--s_Builder.m_MacroCallStackIndex] = NULL;
             return NULL;
         }
 
         l_Call->m_Arguments[i] = l_Value;
     }
+
+    s_Builder.m_MacroCallStack[s_Builder.m_MacroCallStackIndex++] = l_Call;
+    size_t l_MacroCallStackIndex = s_Builder.m_MacroCallStackIndex;
 
     // Evaluate the macro block.
     TMM_Value* l_Result = TMM_EvaluateBlock(l_Macro->m_Block);
@@ -3305,8 +3305,11 @@ static TMM_Value* TMM_EvaluateMacroCall (const TMM_Syntax* p_SyntaxNode)
     }
 
     // Clean up the macro call context.
-    TMM_DestroyMacroCall(l_Call);
-    s_Builder.m_MacroCallStack[--s_Builder.m_MacroCallStackIndex] = NULL;
+    if (s_Builder.m_MacroCallStackIndex == l_MacroCallStackIndex)
+    {
+        TMM_DestroyMacroCall(l_Call);
+        s_Builder.m_MacroCallStack[--s_Builder.m_MacroCallStackIndex] = NULL;
+    }
     
     return l_Result;
 }
@@ -3406,12 +3409,15 @@ TMM_Value* TMM_EvaluateRepeatStatement (const TMM_Syntax* p_SyntaxNode)
         return NULL;
     }
 
+    // Get the current macro call index.
+    size_t l_MacroCallStackIndex = s_Builder.m_MacroCallStackIndex;
+
     // Evaluate the block expression.
     TMM_Value* l_Result = NULL;
     uint64_t l_Count = l_CountValue->m_IntegerPart;
     TMM_DestroyValue(l_CountValue);
 
-    while (l_Count > 0)
+    while (l_Count != 0)
     {
         l_Result = TMM_EvaluateBlock(p_SyntaxNode->m_LeftExpr);
         if (l_Result == NULL)
@@ -3419,8 +3425,26 @@ TMM_Value* TMM_EvaluateRepeatStatement (const TMM_Syntax* p_SyntaxNode)
             return NULL;
         }
 
+        if (l_MacroCallStackIndex > 0)
+        {
+
+            // In the event this repeat loop is part of a macro call, we need to check if a 
+            // return statement was encountered inside the loop. If it has, then we need to
+            // break out of the loop as part of exiting the macro call.
+            if (s_Builder.m_MacroCallStackIndex != l_MacroCallStackIndex)
+            {
+                return l_Result;
+            }
+
+        }
+
         TMM_DestroyValue(l_Result);
-        l_Count--;
+
+        // Decrement the count only if above zero.
+        if (l_Count > 0)
+        {
+            l_Count--;
+        }
     }
 
     return TMM_CreateVoidValue();
@@ -3452,6 +3476,10 @@ TMM_Value* TMM_EvaluateIfStatement (const TMM_Syntax* p_SyntaxNode)
     else if (p_SyntaxNode->m_RightExpr != NULL)
     {
         l_Result = TMM_Evaluate(p_SyntaxNode->m_RightExpr);
+    }
+    else
+    {
+        l_Result = TMM_CreateVoidValue();
     }
 
     TMM_DestroyValue(l_ConditionValue);
@@ -3711,6 +3739,9 @@ TMM_Value* TMM_EvaluateOrg (const TMM_Syntax* p_SyntaxNode)
         // Set the offset value.
         s_Builder.m_CursorInRAM = true;
         s_Builder.m_RAMCursor = l_Offset;
+
+        // Destroy the offset value.
+        TMM_DestroyValue(l_OffsetValue);
     }
     else
     {
@@ -3791,8 +3822,45 @@ TMM_Value* TMM_EvaluateInstruction (const TMM_Syntax* p_SyntaxNode)
     return (l_Good == true) ? TMM_CreateVoidValue() : NULL;
 }
 
+TMM_Value* TMM_EvaluateReturn (const TMM_Syntax* p_SyntaxNode)
+{
+    // Check if the macro call stack is empty.
+    if (s_Builder.m_MacroCallStackIndex == 0)
+    {
+        TM_error("Return syntax outside of a macro call.");
+        return NULL;
+    }
+
+    // Get the macro call context at the top of the stack.
+    TMM_MacroCall* l_Call = s_Builder.m_MacroCallStack[s_Builder.m_MacroCallStackIndex - 1];
+
+    // Check if the return value expression is provided.
+    TMM_Value* l_ReturnValue = NULL;
+    if (p_SyntaxNode->m_LeftExpr != NULL)
+    {
+        l_ReturnValue = TMM_Evaluate(p_SyntaxNode->m_LeftExpr);
+        if (l_ReturnValue == NULL)
+        {
+            return NULL;
+        }
+    }
+    else
+    {
+        l_ReturnValue = TMM_CreateVoidValue();
+    }
+
+    // A "return" statement exits the macro call. Destroy the macro call context.
+    TMM_DestroyMacroCall(l_Call);
+    s_Builder.m_MacroCallStack[--s_Builder.m_MacroCallStackIndex] = NULL;
+
+    return l_ReturnValue;
+}
+
 TMM_Value* TMM_EvaluateBlock (const TMM_Syntax* p_SyntaxNode)
 {
+    // Get the current macro call index.
+    size_t l_MacroCallIndex = s_Builder.m_MacroCallStackIndex;
+
     // Create a new value to hold the result of the block.
     TMM_Value* l_Result = TMM_CreateVoidValue();
 
@@ -3808,6 +3876,14 @@ TMM_Value* TMM_EvaluateBlock (const TMM_Syntax* p_SyntaxNode)
         }
 
         l_Result = l_Value;
+
+        // Check if the macro call stack index has changed. This indicates that a "return" statement
+        // was evaluated in the macro block.
+        if (s_Builder.m_MacroCallStackIndex != l_MacroCallIndex)
+        {
+            // If the macro call stack index has changed, then we need to return the value.
+            return l_Result;
+        }
     }
 
     return l_Result;
@@ -3902,6 +3978,10 @@ TMM_Value* TMM_Evaluate (const TMM_Syntax* p_SyntaxNode)
             l_Result = TMM_EvaluateOrg(p_SyntaxNode);
             break;
 
+        case TMM_ST_RETURN:
+            l_Result = TMM_EvaluateReturn(p_SyntaxNode);
+            break;
+
         case TMM_ST_INSTRUCTION:
             l_Result = TMM_EvaluateInstruction(p_SyntaxNode);
             break;
@@ -3913,7 +3993,8 @@ TMM_Value* TMM_Evaluate (const TMM_Syntax* p_SyntaxNode)
 
     if (l_Result == NULL)
     {
-        fprintf(stderr, " - In file '%s:%zu:%zu.\n",
+        fprintf(stderr, " - Evaluating syntax node: %d\n", p_SyntaxNode->m_Type);
+        fprintf(stderr, " - Evaluating file '%s:%zu:%zu.\n",
             p_SyntaxNode->m_Token.m_SourceFile,
             p_SyntaxNode->m_Token.m_Line,
             p_SyntaxNode->m_Token.m_Column

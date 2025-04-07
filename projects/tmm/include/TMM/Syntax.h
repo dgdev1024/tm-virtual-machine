@@ -30,6 +30,7 @@ typedef enum TMM_SyntaxType
     TMM_ST_INCBIN,                  ///< @brief Include Binary Statement (eg. `incbin "file.bin"`).
     TMM_ST_ASSERT,                  ///< @brief Assert Statement (eg. `assert x == 0`).
     TMM_ST_ORG,                     ///< @brief Origin Statement (eg. `org rom`, `org ram, 0x1400`).
+    TMM_ST_RETURN,                  ///< @brief Return Statement (eg. `return`).
     TMM_ST_INSTRUCTION,             ///< @brief Instruction Statement (eg. `add a, b`, `mv a, b`).
 
     // Expression Nodes
@@ -110,6 +111,7 @@ typedef struct TMM_Syntax
     // - `TMM_ST_ORG` nodes hold the origin offset address in the left child node.
     // - `TMM_ST_ADDRESS` nodes hold the address in the left child node.
     // - `TMM_ST_INSTRUCTION` nodes hold the instruction operands in the left and right child nodes.
+    // - `TMM_ST_RETURN` nodes hold the return value, if any, in the left child node.
     struct TMM_Syntax*       m_LeftExpr;     ///< @brief Left Expression
     struct TMM_Syntax*       m_RightExpr;    ///< @brief Right Expression
     TMM_TokenType            m_Operator;     ///< @brief Operator Token Type

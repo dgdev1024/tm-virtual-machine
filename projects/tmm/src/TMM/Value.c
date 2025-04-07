@@ -55,6 +55,7 @@ TMM_Value* TMM_CopyValue (const TMM_Value* p_Value)
 {
     if (p_Value == NULL)
     {
+        TM_error("Cannot copy a null value.");
         return NULL;
     }
 

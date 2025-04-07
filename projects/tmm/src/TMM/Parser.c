@@ -255,6 +255,71 @@ TMM_Syntax* TMM_ParsePrimaryExpression ()
     }
 }
 
+TMM_Syntax* TMM_ParseMacroCallExpression ()
+{
+    // Peek the next two tokens. Are they an identifier followed by an opening parenthesis?
+    const TMM_Token* l_IdentifierToken = TMM_PeekToken(0);
+    const TMM_Token* l_ParenthesisToken = TMM_PeekToken(1);
+    if (
+        l_IdentifierToken->m_Type != TMM_TOKEN_IDENTIFIER ||
+        l_ParenthesisToken->m_Type != TMM_TOKEN_PARENTHESIS_OPEN
+    )
+    {
+        return TMM_ParsePrimaryExpression();
+    }
+
+    // Advance past the tokens.
+    TMM_AdvanceToken();
+    TMM_AdvanceToken();
+
+    // Create the macro call syntax node.
+    TMM_Syntax* l_MacroCallSyntax = TMM_CreateSyntax(TMM_ST_MACRO_CALL, l_IdentifierToken);
+    strncpy(l_MacroCallSyntax->m_String, l_IdentifierToken->m_Lexeme, TMM_STRING_CAPACITY);
+
+    // Keep track of the number of arguments parsed.
+    size_t l_ArgumentCount = 0;
+
+    // Parse expressions until a closing parenthesis is encountered.
+    while (TMM_AdvanceTokenIfType(TMM_TOKEN_PARENTHESIS_CLOSE) == NULL)
+    {
+        // Parse the next expression.
+        TMM_Syntax* l_Expression = TMM_ParseExpression();
+        if (l_Expression == NULL)
+        {
+            TMM_DestroySyntax(l_MacroCallSyntax);
+            return NULL;
+        }
+
+        // Add the expression to the macro call syntax node.
+        TMM_PushToSyntaxBody(l_MacroCallSyntax, l_Expression);
+
+        // Increment the argument count.
+        l_ArgumentCount++;
+
+        // Expect either a comma or newline after the expression.
+        if (TMM_AdvanceTokenIfType(TMM_TOKEN_COMMA) != NULL)
+        {
+            continue;
+        }
+        else if (TMM_PeekToken(0)->m_Type == TMM_TOKEN_PARENTHESIS_CLOSE)
+        {
+            TMM_AdvanceToken();
+            break;
+        }
+        else
+        {
+            TM_error("Expected a comma or closing parenthesis after an expression in a macro call expression.");
+            TMM_DestroySyntax(l_MacroCallSyntax);
+            return NULL;
+        }
+    }
+
+    // Set the argument count of the macro call syntax node.
+    l_MacroCallSyntax->m_Number = l_ArgumentCount;
+
+    return l_MacroCallSyntax;
+}
+
 // 2. Unary Operators
 //
 // Unary operators are operators that operate on a single operand. The unary operators in the
@@ -295,7 +360,7 @@ TMM_Syntax* TMM_ParseUnaryExpression ()
         return l_UnaryExpr;
     }
 
-    return TMM_ParsePrimaryExpression();
+    return TMM_ParseMacroCallExpression();
 }
 
 // 3. Exponentiation
@@ -1441,6 +1506,32 @@ TMM_Syntax* TMM_ParseInstructionStatement (const TMM_Keyword* p_Keyword)
     return l_InstructionSyntax;
 }
 
+TMM_Syntax* TMM_ParseReturnStatement ()
+{
+    // Store the return value token.
+    const TMM_Token* l_ReturnToken = TMM_PeekToken(0);
+
+    // Create the return syntax node.
+    TMM_Syntax* l_ReturnSyntax = TMM_CreateSyntax(TMM_ST_RETURN, l_ReturnToken);
+
+    // If the return token is a newline or the EOF token, then return the syntax node.
+    if (l_ReturnToken->m_Type == TMM_TOKEN_NEWLINE || l_ReturnToken->m_Type == TMM_TOKEN_EOF)
+    {
+        return l_ReturnSyntax;
+    }
+
+    // Parse the return value expression.
+    TMM_Syntax* l_ReturnValueExpr = TMM_ParseExpression();
+    if (l_ReturnValueExpr == NULL)
+    {
+        TMM_DestroySyntax(l_ReturnSyntax);
+        return NULL;
+    }
+    l_ReturnSyntax->m_LeftExpr = l_ReturnValueExpr;
+
+    return l_ReturnSyntax;
+}
+
 TMM_Syntax* TMM_ParseStatement ()
 {
     // Skip any newline tokens.
@@ -1521,6 +1612,12 @@ TMM_Syntax* TMM_ParseStatement ()
             return TMM_ParseOrgStatement();
         }
 
+        // If the keyword token is a return keyword, then parse a return statement.
+        else if (l_KeywordToken->m_Keyword->m_Type == TMM_KT_RETURN)
+        {
+            return TMM_ParseReturnStatement();
+        }
+
         else if (l_KeywordToken->m_Keyword->m_Type >= TMM_KT_NOP)
         {
             return TMM_ParseInstructionStatement(l_KeywordToken->m_Keyword);
@@ -1577,8 +1674,7 @@ bool TMM_Parse (TMM_Syntax* p_SyntaxBlock)
         TMM_Syntax* l_Statement = TMM_ParseStatement();
         if (l_Statement == NULL)
         {
-            TM_error("Failed to parse statement.");
-            TM_error(" - In file '%s:%zu:%zu.",
+            TM_error(" - Parsing file '%s:%zu:%zu.",
                 s_Parser.m_LeadToken->m_SourceFile,
                 s_Parser.m_LeadToken->m_Line,
                 s_Parser.m_LeadToken->m_Column
