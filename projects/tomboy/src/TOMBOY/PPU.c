@@ -80,6 +80,7 @@ typedef struct TOMBOY_PPU
     TOMBOY_PaletteSpecification     m_OBPI;     ///< @brief The object palette index register.
     uint8_t                         m_OPRI;     ///< @brief The object priority register.
     uint8_t                         m_GRPM;     ///< @brief The graphics mode register.
+    uint8_t                         m_VBP;      ///< @brief The vertical blanking pause register.
 
     // Internal State
     uint8_t     m_WindowLine;                   ///< @brief The current line of the window layer.
@@ -150,6 +151,12 @@ bool TOMBOY_IsWindowVisible (TOMBOY_PPU* p_PPU)
 
 void TOMBOY_IncrementLY (TOMBOY_PPU* p_PPU)
 {
+
+    // If the current scanline is at least 154, then do not increment any further.
+    if (p_PPU->m_LY >= 154)
+    {
+        return;
+    }
     
     // Check to see if the internal window line counter needs to be incremented, as well.
     if (
@@ -920,9 +927,21 @@ void TOMBOY_TickHorizontalBlank (TOMBOY_PPU* p_PPU)
 
 void TOMBOY_TickVerticalBlank (TOMBOY_PPU* p_PPU)
 {
-    
-    // Increment the current dot.
-    p_PPU->m_CurrentDot++;
+
+    // If the PPU is about to exit the vertical blanking period (the current dot is at least 456
+    // and the LY register is at 154), then check to see if the vertical blank pause register
+    // is non-zero. If it is, then the PPU will remain in VBLANK mode until the pause reigster is
+    // set to zero.
+    //
+    // Otherwise, if the current dot is less than 456, then increment the current dot.
+    if (p_PPU->m_CurrentDot >= 456 && p_PPU->m_LY >= TOMBOY_PPU_SCANLINE_COUNT && p_PPU->m_VBP != 0)
+    {
+        return;
+    }
+    else if (p_PPU->m_CurrentDot < 456)
+    {
+        p_PPU->m_CurrentDot++;
+    }
 
     // If the current dot is at least 456, then the vertical blank is complete.
     if (p_PPU->m_CurrentDot >= 456)
@@ -930,6 +949,14 @@ void TOMBOY_TickVerticalBlank (TOMBOY_PPU* p_PPU)
 
         // Increment the LY register.
         TOMBOY_IncrementLY(p_PPU);
+
+        // If all 154 scanlines have been processed, but the vertical blank pause register is non-zero,
+        // then the vertical blank period will not be considered complete until the pause register
+        // is set to zero.
+        if (p_PPU->m_LY >= TOMBOY_PPU_SCANLINE_COUNT && p_PPU->m_VBP != 0)
+        {
+            return;
+        }
 
         // If all 154 scanlines have been processed, then the vertical blank period is complete.
         if (p_PPU->m_LY >= TOMBOY_PPU_SCANLINE_COUNT)
@@ -1088,8 +1115,14 @@ void TOMBOY_ResetPPU (TOMBOY_PPU* p_PPU)
         return;
     }
 
+    // Point to the parent engine.
+    TOMBOY_Engine* l_Engine = p_PPU->m_ParentEngine;
+
     // Clear the PPU structure's memory.
     memset(p_PPU, 0, sizeof(TOMBOY_PPU));
+
+    // Re-set the PPU's parent engine.
+    p_PPU->m_ParentEngine = l_Engine;
 
     // Set the default values for the PPU registers.
     /* LCDC     = 0x91 */   p_PPU->m_LCDC.m_Register    = 0x91; // 0b10010001
@@ -1848,6 +1881,18 @@ uint8_t TOMBOY_ReadGRPM (const TOMBOY_PPU* p_PPU)
     return p_PPU->m_GRPM;
 }
 
+uint8_t TOMBOY_ReadVBP (const TOMBOY_PPU* p_PPU)
+{
+    if (p_PPU == NULL)
+    {
+        TM_error("PPU instance is NULL.");
+        return 0xFF;
+    }
+
+    // Return the VBP register.
+    return p_PPU->m_VBP;
+}
+
 // Public Functions - Hardware Register Setters ////////////////////////////////////////////////////
 
 void TOMBOY_WriteLCDC (TOMBOY_PPU* p_PPU, uint8_t p_Value)
@@ -2304,4 +2349,27 @@ void TOMBOY_WriteGRPM (TOMBOY_PPU* p_PPU, uint8_t p_Value)
 
     // Set the GRPM register.
     p_PPU->m_GRPM = p_Value;
+}
+
+void TOMBOY_WriteVBP (TOMBOY_PPU* p_PPU, uint8_t p_Value)
+{
+    if (p_PPU == NULL)
+    {
+        TM_error("PPU instance is NULL.");
+        return;
+    }
+
+    // The VBP register cannot be written to if the following are true:
+    // - The PPU is enabled (`LCDC` bit 7 is set).
+    // - The PPU is not currently in V-Blank mode.
+    if (
+        p_PPU->m_LCDC.m_DisplayEnable == true &&
+        p_PPU->m_STAT.m_DisplayMode != TOMBOY_DM_VERTICAL_BLANK
+    )
+    {
+        return;
+    }
+
+    // Set the VBP register.
+    p_PPU->m_VBP = p_Value;
 }

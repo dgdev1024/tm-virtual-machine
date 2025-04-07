@@ -59,3 +59,21 @@ uint32_t TOMBOY_GetRequestedSRAMSize (const TOMBOY_Program* p_Program);
  * @return     The requested size of the program's working RAM (WRAM) in bytes.
  */
 uint32_t TOMBOY_GetRequestedWRAMSize (const TOMBOY_Program* p_Program);
+
+/**
+ * @brief      Gets the requested size of the program's executable RAM (XRAM).
+ * 
+ * @param      p_Program  A pointer to the TOMBOY program instance.
+ * 
+ * @return     The requested size of the program's executable RAM (XRAM) in bytes.
+ */
+uint32_t TOMBOY_GetRequestedXRAMSize (const TOMBOY_Program* p_Program);
+
+/**
+ * @brief      Gets the program's title, if any.
+ * 
+ * @param      p_Program  A pointer to the TOMBOY program instance.
+ * 
+ * @return     A pointer to the program's title string, or `NULL` if no title is available.
+ */
+const char* TOMBOY_GetProgramTitle (const TOMBOY_Program* p_Program);

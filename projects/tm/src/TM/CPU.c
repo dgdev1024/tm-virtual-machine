@@ -2602,6 +2602,8 @@ bool TM_StepCPU (TM_CPU* p_CPU)
         {
             TM_SetErrorCode(p_CPU, TM_EC_BAD_EXECUTE);
             p_CPU->m_EA = p_CPU->m_IA;
+
+            TM_error("Attempted to execute non-executable memory at address $%08X.", p_CPU->m_EA);
             return false;
         }
 
@@ -2708,6 +2710,8 @@ bool TM_StepCPU (TM_CPU* p_CPU)
             default:
                 TM_SetErrorCode(p_CPU, TM_EC_INVALID_OPCODE);
                 p_CPU->m_EA = p_CPU->m_IA;
+
+                TM_error("Invalid opcode 0x%02X encountered at address $%08X.", p_CPU->m_OC, p_CPU->m_IA);
                 return false;
         }
 
@@ -3106,6 +3110,8 @@ bool TM_SetErrorCode (TM_CPU* p_CPU, uint8_t p_ErrorCode)
 
     // Set the value of the error code register.
     p_CPU->m_EC = p_ErrorCode;
+    p_CPU->m_Stop = true;
+
     return (p_ErrorCode == TM_EC_OK);
 }
 

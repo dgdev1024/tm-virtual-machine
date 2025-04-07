@@ -1026,6 +1026,15 @@ uint8_t TOMBOY_ReadOPRI (const TOMBOY_PPU* p_PPU);
  */
 uint8_t TOMBOY_ReadGRPM (const TOMBOY_PPU* p_PPU);
 
+/**
+ * @brief Gets the value of the given PPU's vertical blanking pause register, `VBP`.
+ * 
+ * @param p_PPU  A pointer to the PPU structure.
+ * 
+ * @return The value of the `VBP` register.
+ */
+uint8_t TOMBOY_ReadVBP (const TOMBOY_PPU* p_PPU);
+
 // Public Functions - Hardware Register Setters ////////////////////////////////////////////////////
 
 /**
@@ -1256,3 +1265,11 @@ void TOMBOY_WriteOPRI (TOMBOY_PPU* p_PPU, uint8_t p_Value);
  * @param p_Value    The value to set the `GRPM` register to.
  */
 void TOMBOY_WriteGRPM (TOMBOY_PPU* p_PPU, uint8_t p_Value);
+
+/**
+ * @brief Sets the value of the given PPU's vertical blanking pause register, `VBP`.
+ * 
+ * @param p_PPU      A pointer to the PPU structure.
+ * @param p_Value    The value to set the `VBP` register to.
+ */
+void TOMBOY_WriteVBP (TOMBOY_PPU* p_PPU, uint8_t p_Value);

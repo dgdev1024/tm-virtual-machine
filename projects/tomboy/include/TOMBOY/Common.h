@@ -14,6 +14,7 @@
 #define TOMBOY_SRAM_START       0xC0000000
 #define TOMBOY_SRAM_END         0xDFFCFFFF
 #define TOMBOY_SRAM_SIZE        (TOMBOY_SRAM_END - TOMBOY_SRAM_START + 1)
+#define TOMBOY_XRAM_SIZE        (TM_XRAM_END - TM_XRAM_BEGIN + 1)
 #define TOMBOY_SCREEN_START     0xDFFD0000
 #define TOMBOY_SCREEN_END       0xDFFE7FFF
 #define TOMBOY_NSEND_START      0xDFFF0000
@@ -125,6 +126,7 @@ typedef enum TOMBOY_HardwarePort
     TOMBOY_HP_OBPD,                         ///< @brief `OBPD` - Object Palette Data Register
     TOMBOY_HP_OPRI,                         ///< @brief `OPRI` - Object Priority Register
     TOMBOY_HP_GRPM,                         ///< @brief `GRPM` - Graphics Mode Register
+    TOMBOY_HP_VBP,                          ///< @brief `VBP` - Vertical Blanking Pause Register
     TOMBOY_HP_PCM12,                        ///< @brief `PCM12` - PCM Channel 1/2 Output Register
     TOMBOY_HP_PCM34,                        ///< @brief `PCM34` - PCM Channel 3/4 Output Register
     TOMBOY_HP_IE = 0xFFFFFFFF               ///< @brief `IE` - Interrupt Enable Register

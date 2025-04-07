@@ -8,16 +8,15 @@
 
 typedef struct TOMBOY_ProgramHeader
 {
-    char        m_Identifier[4];            ///< @brief Identifier for the program header, should be "TMBY".
-    uint8_t     m_MajorVersion;             ///< @brief Major version of the program.
-    uint8_t     m_MinorVersion;             ///< @brief Minor version of the program.
-    uint16_t    m_PatchVersion;             ///< @brief Patch version of the program.
-    uint32_t    m_ProgramSize;              ///< @brief Size of the program in bytes.
-    uint32_t    m_ProgramWRAM;              ///< @brief Requested size of the working RAM (WRAM) in bytes.
-    uint32_t    m_ProgramSRAM;              ///< @brief Requested size of the static RAM (SRAM) in bytes.
-    char        m_ProgramName[32];          ///< @brief Name of the program.
-    char        m_ProgramAuthor[32];        ///< @brief Author of the program.
-    char        m_ProgramDescription[256];  ///< @brief Description of the program.
+    uint8_t         m_Identifier[4];            ///< @brief `$0000` - Program identifier, must be "TMBY" (0x54, 0x4D, 0x42, 0x59).
+    uint8_t         m_Version[4];               ///< @brief `$0004` - Program version, laid out as `0xMMNNPPPP` where `MM` is the major version, `NN` is the minor version, and `PPPP` is the patch version.
+    uint8_t         m_RequestedWRAM[4];         ///< @brief `$0008` - The four bytes of the requested WRAM size, laid out in little-endian order.
+    uint8_t         m_RequestedSRAM[4];         ///< @brief `$000C` - The four bytes of the requested SRAM size, laid out in little-endian order.
+    uint8_t         m_RequestedXRAM[4];         ///< @brief `$0010` - The four bytes of the requested XRAM size, laid out in little-endian order.
+    uint8_t         m_Padding0[12];             ///< @brief `$0014` - Padding bytes.
+    uint8_t         m_ProgramName[32];          ///< @brief `$0020` - The program name, null-terminated.
+    uint8_t         m_ProgramAuthor[32];        ///< @brief `$0040` - The program author, null-terminated.
+    uint8_t         m_ProgramDescription[256];  ///< @brief `$0060` - The program description, null-terminated.
 } TOMBOY_ProgramHeader;
 
 // Program Structure ///////////////////////////////////////////////////////////////////////////////
@@ -26,16 +25,19 @@ typedef struct TOMBOY_Program
 {
     uint8_t*                        m_Data;             ///< @brief Pointer to the program data in memory.
     uint32_t                        m_Size;             ///< @brief Size of the program data in bytes.
+    uint32_t                        m_RequestedWRAM;    ///< @brief The size of the working RAM requested by the program, in bytes.
+    uint32_t                        m_RequestedSRAM;    ///< @brief The size of the static RAM requested by the program, in bytes.
+    uint32_t                        m_RequestedXRAM;    ///< @brief The size of the executable RAM requested by the program, in bytes.
     const TOMBOY_ProgramHeader*     m_Header;           ///< @brief Pointer to the program header at the start of the program data.
 } TOMBOY_Program;
 
 // Private Function Prototypes /////////////////////////////////////////////////////////////////////
 
-static bool TOMBOY_ValidateProgram (const TOMBOY_Program* p_Program);
+static bool TOMBOY_ValidateProgram (TOMBOY_Program* p_Program);
 
 // Private Functions ///////////////////////////////////////////////////////////////////////////////
 
-bool TOMBOY_ValidateProgram (const TOMBOY_Program* p_Program)
+bool TOMBOY_ValidateProgram (TOMBOY_Program* p_Program)
 {
     // Point to the program header.
     const TOMBOY_ProgramHeader* l_Header = p_Program->m_Header;
@@ -52,22 +54,57 @@ bool TOMBOY_ValidateProgram (const TOMBOY_Program* p_Program)
         return false;
     }
 
-    // Validate the program size.
-    if (l_Header->m_ProgramSize != p_Program->m_Size)
+    // Retrieve the program's requested WRAM and SRAM sizes.
+    p_Program->m_RequestedWRAM = (uint32_t) l_Header->m_RequestedWRAM[0] |
+                                 ((uint32_t) l_Header->m_RequestedWRAM[1] << 8) |
+                                 ((uint32_t) l_Header->m_RequestedWRAM[2] << 16) |
+                                 ((uint32_t) l_Header->m_RequestedWRAM[3] << 24);
+    p_Program->m_RequestedSRAM = (uint32_t) l_Header->m_RequestedSRAM[0] |
+                                 ((uint32_t) l_Header->m_RequestedSRAM[1] << 8) |
+                                 ((uint32_t) l_Header->m_RequestedSRAM[2] << 16) |
+                                 ((uint32_t) l_Header->m_RequestedSRAM[3] << 24);
+    p_Program->m_RequestedXRAM = (uint32_t) l_Header->m_RequestedXRAM[0] |
+                                 ((uint32_t) l_Header->m_RequestedXRAM[1] << 8) |
+                                 ((uint32_t) l_Header->m_RequestedXRAM[2] << 16) |
+                                 ((uint32_t) l_Header->m_RequestedXRAM[3] << 24);
+
+    // Validate the requested WRAM size.
+    if (p_Program->m_RequestedWRAM > TOMBOY_WRAM_SIZE)
     {
-        TM_error("Program size mismatch: expected %u bytes, got %u bytes.", l_Header->m_ProgramSize, p_Program->m_Size);
+        TM_error("Requested WRAM size 0x%08X exceeds maximum of 0x%08X.", p_Program->m_RequestedWRAM, TOMBOY_WRAM_SIZE);
         return false;
     }
 
-    if (l_Header->m_ProgramWRAM > TOMBOY_WRAM_SIZE)
+    // Validate the requested SRAM size.
+    if (p_Program->m_RequestedSRAM > TOMBOY_SRAM_SIZE)
     {
-        TM_error("Requested WRAM size %u exceeds maximum of %u bytes.", l_Header->m_ProgramWRAM, TOMBOY_WRAM_SIZE);
+        TM_error("Requested SRAM size 0x%08X exceeds maximum of 0x%08X.", p_Program->m_RequestedSRAM, TOMBOY_SRAM_SIZE);
         return false;
     }
 
-    if (l_Header->m_ProgramSRAM > TOMBOY_SRAM_SIZE)
+    // Validate the requested XRAM size.
+    if (p_Program->m_RequestedXRAM > TOMBOY_XRAM_SIZE)
     {
-        TM_error("Requested SRAM size %u exceeds maximum of %u bytes.", l_Header->m_ProgramSRAM, TOMBOY_SRAM_SIZE);
+        TM_error("Requested XRAM size 0x%08X exceeds maximum of 0x%08X.", p_Program->m_RequestedXRAM, TOMBOY_XRAM_SIZE);
+        return false;
+    }
+
+    // Ensure the program name, author, and description are null-terminated.
+    if (l_Header->m_ProgramName[31] != '\0')
+    {
+        TM_error("Program name is not null-terminated.");
+        return false;
+    }
+
+    if (l_Header->m_ProgramAuthor[31] != '\0')
+    {
+        TM_error("Program author is not null-terminated.");
+        return false;
+    }
+
+    if (l_Header->m_ProgramDescription[255] != '\0')
+    {
+        TM_error("Program description is not null-terminated.");
         return false;
     }
 
@@ -102,7 +139,7 @@ TOMBOY_Program* TOMBOY_CreateProgram (const char* p_Filename)
         fclose(l_File);
         return NULL;
     }
-    else if (l_FileSize < 0x4000)
+    else if (l_FileSize <= 0x3002)
     {
         TM_error("File '%s' is too small to be a valid TOMBOY program.", p_Filename);
         fclose(l_File);
@@ -183,7 +220,7 @@ uint32_t TOMBOY_GetRequestedSRAMSize (const TOMBOY_Program* p_Program)
         return 0;
     }
 
-    return p_Program->m_Header->m_ProgramSRAM;
+    return p_Program->m_RequestedSRAM;
 }
 
 uint32_t TOMBOY_GetRequestedWRAMSize (const TOMBOY_Program* p_Program)
@@ -194,5 +231,27 @@ uint32_t TOMBOY_GetRequestedWRAMSize (const TOMBOY_Program* p_Program)
         return 0;
     }
 
-    return p_Program->m_Header->m_ProgramWRAM;
+    return p_Program->m_RequestedWRAM;
+}
+
+uint32_t TOMBOY_GetRequestedXRAMSize (const TOMBOY_Program* p_Program)
+{
+    if (p_Program == NULL)
+    {
+        TM_error("TOMBOY program is NULL.");
+        return 0;
+    }
+
+    return p_Program->m_RequestedXRAM;
+}
+
+const char* TOMBOY_GetProgramTitle (const TOMBOY_Program* p_Program)
+{
+    if (p_Program == NULL)
+    {
+        TM_error("TOMBOY program is NULL.");
+        return NULL;
+    }
+
+    return (const char*) p_Program->m_Header->m_ProgramName;
 }

@@ -22,10 +22,11 @@ typedef struct TOMBOY_RAM TOMBOY_RAM;
  * 
  * @param   p_WRAMSize  The size of the working RAM in bytes.
  * @param   p_SRAMSize  The size of the static RAM in bytes.
+ * @param   p_XRAMSize  The size of the executable RAM in bytes.
  * 
  * @return  A pointer to the newly created TOMBOY RAM context, or NULL if the creation failed.
  */
-TOMBOY_RAM* TOMBOY_CreateRAM (uint32_t p_WRAMSize, uint32_t p_SRAMSize);
+TOMBOY_RAM* TOMBOY_CreateRAM (uint32_t p_WRAMSize, uint32_t p_SRAMSize, uint32_t p_XRAMSize);
 
 /**
  * @brief   Destroys the specified TOMBOY RAM context.
@@ -103,6 +104,25 @@ uint8_t TOMBOY_ReadSRAMByte (const TOMBOY_RAM* p_RAM, uint32_t p_Address);
 void TOMBOY_WriteSRAMByte (TOMBOY_RAM* p_RAM, uint32_t p_Address, uint8_t p_Value);
 
 /**
+ * @brief   Reads a byte from the specified address in the TOMBOY's executable RAM (XRAM).
+ * 
+ * @param   p_RAM      A pointer to the TOMBOY RAM context.
+ * @param   p_Address  The address to read from.
+ * 
+ * @return  The byte read from the specified address.
+ */
+uint8_t TOMBOY_ReadXRAMByte (const TOMBOY_RAM* p_RAM, uint32_t p_Address);
+
+/**
+ * @brief   Writes a byte to the specified address in the TOMBOY's executable RAM (XRAM).
+ * 
+ * @param   p_RAM      A pointer to the TOMBOY RAM context.
+ * @param   p_Address  The address to write to.
+ * @param   p_Value    The byte value to write.
+ */
+void TOMBOY_WriteXRAMByte (TOMBOY_RAM* p_RAM, uint32_t p_Address, uint8_t p_Value);
+
+/**
  * @brief   Reads a byte from the specified address in the TOMBOY's Quick RAM (QRAM).
  * 
  * @param   p_RAM      A pointer to the TOMBOY RAM context.
@@ -120,3 +140,41 @@ uint8_t TOMBOY_ReadQRAMByte (const TOMBOY_RAM* p_RAM, uint32_t p_Address);
  * @param   p_Value    The byte value to write.
  */
 void TOMBOY_WriteQRAMByte (TOMBOY_RAM* p_RAM, uint32_t p_Address, uint8_t p_Value);
+
+/**
+ * @brief   Reads a byte from the specified address in the TOMBOY's data stack.
+ * 
+ * @param   p_RAM      A pointer to the TOMBOY RAM context.
+ * @param   p_Address  The address to read from.
+ * 
+ * @return  The byte read from the specified address.
+ */
+uint8_t TOMBOY_ReadDataStackByte (const TOMBOY_RAM* p_RAM, uint32_t p_Address);
+
+/**
+ * @brief   Writes a byte to the specified address in the TOMBOY's data stack.
+ * 
+ * @param   p_RAM      A pointer to the TOMBOY RAM context.
+ * @param   p_Address  The address to write to.
+ * @param   p_Value    The byte value to write.
+ */
+void TOMBOY_WriteDataStackByte (TOMBOY_RAM* p_RAM, uint32_t p_Address, uint8_t p_Value);
+
+/**
+ * @brief   Reads a byte from the specified address in the TOMBOY's call stack.
+ * 
+ * @param   p_RAM      A pointer to the TOMBOY RAM context.
+ * @param   p_Address  The address to read from.
+ * 
+ * @return  The byte read from the specified address.
+ */
+uint8_t TOMBOY_ReadCallStackByte (const TOMBOY_RAM* p_RAM, uint32_t p_Address);
+
+/**
+ * @brief   Writes a byte to the specified address in the TOMBOY's call stack.
+ * 
+ * @param   p_RAM      A pointer to the TOMBOY RAM context.
+ * @param   p_Address  The address to write to.
+ * @param   p_Value    The byte value to write.
+ */
+void TOMBOY_WriteCallStackByte (TOMBOY_RAM* p_RAM, uint32_t p_Address, uint8_t p_Value);

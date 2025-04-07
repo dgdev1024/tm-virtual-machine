@@ -63,6 +63,12 @@ uint8_t TOMBOY_BusRead (uint32_t p_Address)
         return TOMBOY_ReadSRAMByte(s_CurrentEngine->m_RAM, p_Address - TOMBOY_SRAM_START);
     }
 
+    // `0xE0000000` - `0xFFFCFFFF`: Executable RAM Space
+    if (p_Address >= TM_XRAM_BEGIN && p_Address <= TM_XRAM_END)
+    {
+        return TOMBOY_ReadXRAMByte(s_CurrentEngine->m_RAM, p_Address - TM_XRAM_BEGIN);
+    }
+
     // `0xDFFD0000` - `0xDFFE7FFF`: Screen Buffer Space
     if (p_Address >= TOMBOY_SCREEN_START && p_Address <= TOMBOY_SCREEN_END)
     {
@@ -109,6 +115,24 @@ uint8_t TOMBOY_BusRead (uint32_t p_Address)
     if (p_Address >= TOMBOY_WAVE_START && p_Address <= TOMBOY_WAVE_END)
     {
         return TOMBOY_ReadWaveByte(s_CurrentEngine->m_APU, p_Address - TOMBOY_WAVE_START);
+    }
+
+    // `0xFFFD0000` - `0xFFFDFFFF`: Data Stack Space
+    if (p_Address >= TM_DSTACK_BEGIN && p_Address <= TM_DSTACK_END)
+    {
+        return TOMBOY_ReadDataStackByte(s_CurrentEngine->m_RAM, p_Address - TM_DSTACK_BEGIN);
+    }
+
+    // `0xFFFE0000` - `0xFFFEFFFF`: Call Stack Space
+    if (p_Address >= TM_CSTACK_BEGIN && p_Address <= TM_CSTACK_END)
+    {
+        return TOMBOY_ReadDataStackByte(s_CurrentEngine->m_RAM, p_Address - TM_CSTACK_BEGIN);
+    }
+
+    // `0xFFFE8000` - `0xFFFEFFFF`: Quick RAM Space
+    if (p_Address >= TM_QRAM_BEGIN && p_Address <= TM_QRAM_END)
+    {
+        return TOMBOY_ReadQRAMByte(s_CurrentEngine->m_RAM, p_Address - TM_QRAM_BEGIN);
     }
 
     // `0xFFFFFF00` - `0xFFFFFFFF`: IO Space
@@ -179,6 +203,7 @@ uint8_t TOMBOY_BusRead (uint32_t p_Address)
         case TOMBOY_HP_OBPD:  return TOMBOY_ReadOBPD(s_CurrentEngine->m_PPU);
         case TOMBOY_HP_OPRI:  return TOMBOY_ReadOPRI(s_CurrentEngine->m_PPU);
         case TOMBOY_HP_GRPM:  return TOMBOY_ReadGRPM(s_CurrentEngine->m_PPU);
+        case TOMBOY_HP_VBP:   return TOMBOY_ReadVBP(s_CurrentEngine->m_PPU);
         case TOMBOY_HP_IE:    return TM_GetInterruptEnable(s_CurrentEngine->m_CPU);
         default:              return 0xFF; // Invalid address
     }
@@ -199,6 +224,13 @@ void TOMBOY_BusWrite (uint32_t p_Address, uint8_t p_Data)
     if (p_Address >= TOMBOY_SRAM_START && p_Address <= TOMBOY_SRAM_END)
     {
         TOMBOY_WriteSRAMByte(s_CurrentEngine->m_RAM, p_Address - TOMBOY_SRAM_START, p_Data);
+        return;
+    }
+
+    // `0xE0000000` - `0xFFFCFFFF`: Executable RAM Space
+    if (p_Address >= TM_XRAM_BEGIN && p_Address <= TM_XRAM_END)
+    {
+        TOMBOY_WriteXRAMByte(s_CurrentEngine->m_RAM, p_Address - TM_XRAM_BEGIN, p_Data);
         return;
     }
 
@@ -241,6 +273,27 @@ void TOMBOY_BusWrite (uint32_t p_Address, uint8_t p_Data)
     if (p_Address >= TOMBOY_WAVE_START && p_Address <= TOMBOY_WAVE_END)
     {
         TOMBOY_WriteWaveByte(s_CurrentEngine->m_APU, p_Address - TOMBOY_WAVE_START, p_Data);
+        return;
+    }
+
+    // `0xFFFD0000` - `0xFFFDFFFF`: Data Stack Space
+    if (p_Address >= TM_DSTACK_BEGIN && p_Address <= TM_DSTACK_END)
+    {
+        TOMBOY_WriteDataStackByte(s_CurrentEngine->m_RAM, p_Address - TM_DSTACK_BEGIN, p_Data);
+        return;
+    }
+
+    // `0xFFFE0000` - `0xFFFEFFFF`: Call Stack Space
+    if (p_Address >= TM_CSTACK_BEGIN && p_Address <= TM_CSTACK_END)
+    {
+        TOMBOY_WriteDataStackByte(s_CurrentEngine->m_RAM, p_Address - TM_CSTACK_BEGIN, p_Data);
+        return;
+    }
+
+    // `0xFFFE8000` - `0xFFFEFFFF`: Quick RAM Space
+    if (p_Address >= TM_QRAM_BEGIN && p_Address <= TM_QRAM_END)
+    {
+        TOMBOY_WriteQRAMByte(s_CurrentEngine->m_RAM, p_Address - TM_QRAM_BEGIN, p_Data);
         return;
     }
 
@@ -312,6 +365,7 @@ void TOMBOY_BusWrite (uint32_t p_Address, uint8_t p_Data)
         case TOMBOY_HP_OBPD:  TOMBOY_WriteOBPD(s_CurrentEngine->m_PPU, p_Data); break;
         case TOMBOY_HP_OPRI:  TOMBOY_WriteOPRI(s_CurrentEngine->m_PPU, p_Data); break;
         case TOMBOY_HP_GRPM:  TOMBOY_WriteGRPM(s_CurrentEngine->m_PPU, p_Data); break;
+        case TOMBOY_HP_VBP:   TOMBOY_WriteVBP(s_CurrentEngine->m_PPU, p_Data); break;
         case TOMBOY_HP_IE:    TM_SetInterruptEnable(s_CurrentEngine->m_CPU, p_Data); break;
         default:              break; // Invalid address
     }
@@ -344,6 +398,8 @@ bool TOMBOY_Cycle (uint32_t p_Cycles)
             }
         }
     }
+
+    return true;
 }
 
 // Public Functions ////////////////////////////////////////////////////////////////////////////////
@@ -391,7 +447,8 @@ TOMBOY_Engine* TOMBOY_CreateEngine (const TOMBOY_Program* p_Program)
     // Get the expected WRAM and SRAM sizes from the program. Use them to create the RAM instance.
     uint32_t l_WRAMSize = TOMBOY_GetRequestedWRAMSize(p_Program);
     uint32_t l_SRAMSize = TOMBOY_GetRequestedSRAMSize(p_Program);
-    l_Engine->m_RAM = TOMBOY_CreateRAM(l_WRAMSize, l_SRAMSize);
+    uint32_t l_XRAMSize = TOMBOY_GetRequestedXRAMSize(p_Program);
+    l_Engine->m_RAM = TOMBOY_CreateRAM(l_WRAMSize, l_SRAMSize, l_XRAMSize);
     TM_expect(l_Engine->m_RAM != NULL, "Failed to create TOMBOY RAM!");
 
     // Load the program into the engine.
@@ -469,7 +526,16 @@ bool TOMBOY_TickEngine ()
     }
 
     TM_StepCPU(s_CurrentEngine->m_CPU);
-    return TM_GetErrorCode(s_CurrentEngine->m_CPU) == TM_EC_OK;
+
+    // Check if the CPU is stopped.
+    bool l_Stopped = TM_IsStopped(s_CurrentEngine->m_CPU);
+    if (l_Stopped == true)
+    {
+        // If the CPU has been stopped, then report the error code before returning.
+        TM_info("Program exited with code %u.", TM_GetErrorCode(s_CurrentEngine->m_CPU));
+    }
+
+    return l_Stopped == false;
 }
 
 uint64_t TOMBOY_GetCycleCount (const TOMBOY_Engine* p_Engine)
@@ -506,4 +572,49 @@ TM_CPU* TOMBOY_GetCPU (TOMBOY_Engine* p_Engine)
     }
 
     return p_Engine->m_CPU;
+}
+
+TOMBOY_APU* TOMBOY_GetAPU (TOMBOY_Engine* p_Engine)
+{
+    if (p_Engine == NULL)
+    {
+        TM_error("Engine context is NULL!");
+        return NULL;
+    }
+
+    return p_Engine->m_APU;
+}
+
+TOMBOY_PPU* TOMBOY_GetPPU (TOMBOY_Engine* p_Engine)
+{
+    if (p_Engine == NULL)
+    {
+        TM_error("Engine context is NULL!");
+        return NULL;
+    }
+
+    return p_Engine->m_PPU;
+}
+
+TOMBOY_Joypad* TOMBOY_GetJoypad (TOMBOY_Engine* p_Engine)
+{
+    if (p_Engine == NULL)
+    {
+        TM_error("Engine context is NULL!");
+        return NULL;
+    }
+
+    return p_Engine->m_Joypad;
+}
+
+void TOMBOY_SetCallbacks (TOMBOY_Engine* p_Engine, TOMBOY_FrameRenderedCallback p_FrameCallback, TOMBOY_AudioMixCallback p_AudioCallback)
+{
+    if (p_Engine == NULL)
+    {
+        TM_error("Engine context is NULL!");
+        return;
+    }
+
+    TOMBOY_SetFrameRenderedCallback(p_Engine->m_PPU, p_FrameCallback);
+    TOMBOY_SetAudioMixCallback(p_Engine->m_APU, p_AudioCallback);
 }

@@ -11,13 +11,17 @@ typedef struct TOMBOY_RAM
     uint8_t* m_WRAM;         ///< @brief Pointer to the working RAM (WRAM) buffer.
     uint8_t* m_SRAM;         ///< @brief Pointer to the static RAM (SRAM) buffer.
     uint8_t* m_QRAM;         ///< @brief Pointer to the quick RAM (QRAM) buffer.
+    uint8_t* m_XRAM;         ///< @brief Pointer to the executable RAM (XRAM) buffer.
+    uint8_t* m_DataStack;   ///< @brief Pointer to the data stack buffer.
+    uint8_t* m_CallStack;   ///< @brief Pointer to the call stack buffer.
     uint32_t m_WRAMSize;    ///< @brief Size of the working RAM (WRAM) in bytes.
     uint32_t m_SRAMSize;    ///< @brief Size of the static RAM (SRAM) in bytes.
+    uint32_t m_XRAMSize;    ///< @brief Size of the executable RAM (XRAM) in bytes.
 } TOMBOY_RAM;
 
 // Public Functions ////////////////////////////////////////////////////////////////////////////////
 
-TOMBOY_RAM* TOMBOY_CreateRAM (uint32_t p_WRAMSize, uint32_t p_SRAMSize)
+TOMBOY_RAM* TOMBOY_CreateRAM (uint32_t p_WRAMSize, uint32_t p_SRAMSize, uint32_t p_XRAMSize)
 {
     // Allocate memory for the RAM context.
     TOMBOY_RAM* l_RAM = TM_calloc(1, TOMBOY_RAM);
@@ -39,9 +43,25 @@ TOMBOY_RAM* TOMBOY_CreateRAM (uint32_t p_WRAMSize, uint32_t p_SRAMSize)
         l_RAM->m_SRAMSize = p_SRAMSize;
     }
 
+    // Allocate memory for the executable RAM (XRAM).
+    if (p_XRAMSize > 0)
+    {
+        l_RAM->m_XRAM = TM_calloc(p_XRAMSize, uint8_t);
+        TM_pexpect(l_RAM->m_XRAM != NULL, "Failed to allocate memory for TOMBOY XRAM");
+        l_RAM->m_XRAMSize = p_XRAMSize;
+    }
+
     // Allocate memory for the quick RAM (QRAM).
     l_RAM->m_QRAM = TM_calloc(0x10000, uint8_t);
     TM_pexpect(l_RAM->m_QRAM != NULL, "Failed to allocate memory for TOMBOY QRAM");
+
+    // Allocate memory for the data stack.
+    l_RAM->m_DataStack = TM_calloc(0x10000, uint8_t);
+    TM_pexpect(l_RAM->m_DataStack != NULL, "Failed to allocate memory for TOMBOY data stack");
+
+    // Allocate memory for the call stack.
+    l_RAM->m_CallStack = TM_calloc(0x10000, uint8_t);
+    TM_pexpect(l_RAM->m_CallStack != NULL, "Failed to allocate memory for TOMBOY call stack");
 
     return l_RAM;
 }
@@ -50,6 +70,9 @@ void TOMBOY_DestroyRAM (TOMBOY_RAM* p_RAM)
 {
     if (p_RAM != NULL)
     {
+        TM_free(p_RAM->m_DataStack);
+        TM_free(p_RAM->m_CallStack);
+        TM_free(p_RAM->m_XRAM);
         TM_free(p_RAM->m_WRAM);
         TM_free(p_RAM->m_SRAM);
         TM_free(p_RAM->m_QRAM);
@@ -70,8 +93,15 @@ void TOMBOY_ResetRAM (TOMBOY_RAM* p_RAM)
         {
             memset(p_RAM->m_SRAM, 0x00, p_RAM->m_SRAMSize);
         }
+
+        if (p_RAM->m_XRAM != NULL)
+        {
+            memset(p_RAM->m_XRAM, 0x00, 0x10000);
+        }
         
         memset(p_RAM->m_QRAM, 0x00, 0x10000);
+        memset(p_RAM->m_DataStack, 0x00, 0x10000);
+        memset(p_RAM->m_CallStack, 0x00, 0x10000);
     }
 }
 
@@ -271,6 +301,50 @@ void TOMBOY_WriteSRAMByte (TOMBOY_RAM* p_RAM, uint32_t p_Address, uint8_t p_Valu
     p_RAM->m_SRAM[p_Address] = p_Value;
 }
 
+uint8_t TOMBOY_ReadXRAMByte (const TOMBOY_RAM* p_RAM, uint32_t p_Address)
+{
+    if (p_RAM == NULL)
+    {
+        TM_error("RAM context is NULL.");
+        return 0xFF;
+    }
+
+    if (p_Address >= TOMBOY_XRAM_SIZE)
+    {
+        TM_error("XRAM read address $%08X is out of bounds.", p_Address);
+        return 0xFF;
+    }
+
+    if (p_RAM->m_XRAM == NULL || p_Address >= p_RAM->m_XRAMSize)
+    {
+        return 0xFF;
+    }
+
+    return p_RAM->m_XRAM[p_Address];
+}
+
+void TOMBOY_WriteXRAMByte (TOMBOY_RAM* p_RAM, uint32_t p_Address, uint8_t p_Value)
+{
+    if (p_RAM == NULL)
+    {
+        TM_error("RAM context is NULL.");
+        return;
+    }
+
+    if (p_Address >= TOMBOY_XRAM_SIZE)
+    {
+        TM_error("XRAM write address $%08X is out of bounds.", p_Address);
+        return;
+    }
+
+    if (p_RAM->m_XRAM == NULL || p_Address >= p_RAM->m_XRAMSize)
+    {
+        return;
+    }
+
+    p_RAM->m_XRAM[p_Address] = p_Value;
+}
+
 uint8_t TOMBOY_ReadQRAMByte (const TOMBOY_RAM* p_RAM, uint32_t p_Address)
 {
     if (p_RAM == NULL)
@@ -303,4 +377,72 @@ void TOMBOY_WriteQRAMByte (TOMBOY_RAM* p_RAM, uint32_t p_Address, uint8_t p_Valu
     }
 
     p_RAM->m_QRAM[p_Address] = p_Value;
+}
+
+uint8_t TOMBOY_ReadDataStackByte (const TOMBOY_RAM* p_RAM, uint32_t p_Address)
+{
+    if (p_RAM == NULL)
+    {
+        TM_error("RAM context is NULL.");
+        return 0xFF;
+    }
+
+    if (p_Address >= 0x10000)
+    {
+        TM_error("Data stack read address $%08X is out of bounds.", p_Address);
+        return 0xFF;
+    }
+
+    return p_RAM->m_DataStack[p_Address];
+}
+
+void TOMBOY_WriteDataStackByte (TOMBOY_RAM* p_RAM, uint32_t p_Address, uint8_t p_Value)
+{
+    if (p_RAM == NULL)
+    {
+        TM_error("RAM context is NULL.");
+        return;
+    }
+
+    if (p_Address >= 0x10000)
+    {
+        TM_error("Data stack write address $%08X is out of bounds.", p_Address);
+        return;
+    }
+
+    p_RAM->m_DataStack[p_Address] = p_Value;
+}
+
+uint8_t TOMBOY_ReadCallStackByte (const TOMBOY_RAM* p_RAM, uint32_t p_Address)
+{
+    if (p_RAM == NULL)
+    {
+        TM_error("RAM context is NULL.");
+        return 0xFF;
+    }
+
+    if (p_Address >= 0x10000)
+    {
+        TM_error("Call stack read address $%08X is out of bounds.", p_Address);
+        return 0xFF;
+    }
+
+    return p_RAM->m_CallStack[p_Address];
+}
+
+void TOMBOY_WriteCallStackByte (TOMBOY_RAM* p_RAM, uint32_t p_Address, uint8_t p_Value)
+{
+    if (p_RAM == NULL)
+    {
+        TM_error("RAM context is NULL.");
+        return;
+    }
+
+    if (p_Address >= 0x10000)
+    {
+        TM_error("Call stack write address $%08X is out of bounds.", p_Address);
+        return;
+    }
+
+    p_RAM->m_CallStack[p_Address] = p_Value;
 }

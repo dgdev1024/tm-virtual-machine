@@ -218,6 +218,9 @@ static bool TMM_ResizeOutputBuffer (size_t p_WriteSize)
     uint8_t* l_NewOutput = TM_realloc(s_Builder.m_Output, l_NewCapacity, uint8_t);
     TM_pexpect(l_NewOutput != NULL, "Failed to reallocate memory for the builder's output buffer");
 
+    // Zero out the new memory.
+    memset(l_NewOutput + s_Builder.m_OutputCapacity, 0xFF, l_NewCapacity - s_Builder.m_OutputCapacity);
+
     s_Builder.m_Output = l_NewOutput;
     s_Builder.m_OutputCapacity = l_NewCapacity;
     return true;
@@ -305,10 +308,10 @@ static bool TMM_DefineLong (uint32_t p_Value)
         s_Builder.m_OutputSize = s_Builder.m_ROMCursor + 4;
     }
 
-    s_Builder.m_Output[s_Builder.m_OutputSize++] = (uint8_t) (p_Value & 0xFF);
-    s_Builder.m_Output[s_Builder.m_OutputSize++] = (uint8_t) ((p_Value >> 8) & 0xFF);
-    s_Builder.m_Output[s_Builder.m_OutputSize++] = (uint8_t) ((p_Value >> 16) & 0xFF);
-    s_Builder.m_Output[s_Builder.m_OutputSize++] = (uint8_t) ((p_Value >> 24) & 0xFF);
+    s_Builder.m_Output[s_Builder.m_ROMCursor++] = (uint8_t) (p_Value & 0xFF);
+    s_Builder.m_Output[s_Builder.m_ROMCursor++] = (uint8_t) ((p_Value >> 8) & 0xFF);
+    s_Builder.m_Output[s_Builder.m_ROMCursor++] = (uint8_t) ((p_Value >> 16) & 0xFF);
+    s_Builder.m_Output[s_Builder.m_ROMCursor++] = (uint8_t) ((p_Value >> 24) & 0xFF);
     return true;
 }
 
@@ -816,9 +819,12 @@ static bool TMM_EvaluateInstructionLD (const TMM_Syntax* p_SyntaxNode)
         return false;
     }
 
+    // Get the register type of the left expression.
+    TMM_KeywordType l_LeftRegisterType = ((p_SyntaxNode->m_LeftExpr->m_KeywordType - TMM_KT_A) & 0x0F);
+
     // Set up the opcode for the instruction.
     uint16_t l_Opcode = TM_INST_LD;
-    l_Opcode += (((p_SyntaxNode->m_LeftExpr->m_KeywordType - TMM_KT_A) & 0x0F) << 4);
+    l_Opcode += (l_LeftRegisterType << 4);
 
     // Check the right expression's syntax type. Affect nibbles 0 and 1 of the opcode accordingly.
     switch (p_SyntaxNode->m_RightExpr->m_Type)
@@ -864,8 +870,7 @@ static bool TMM_EvaluateInstructionLD (const TMM_Syntax* p_SyntaxNode)
     uint32_t l_RightOperand = l_RightValue->m_IntegerPart & 0xFFFFFFFF;
     TMM_DestroyValue(l_RightValue);
 
-    // Write the operand to the output buffer.
-    return TMM_DefineLong(l_RightOperand);
+    return TMM_DefineIntegerByRegisterType(p_SyntaxNode->m_LeftExpr->m_KeywordType, l_RightOperand);
 }
 
 static bool TMM_EvaluateInstructionLDQ (const TMM_Syntax* p_SyntaxNode)
@@ -1347,6 +1352,13 @@ static bool TMM_EvaluateInstructionJPB (const TMM_Syntax* p_SyntaxNode)
     // Write the opcode to the output buffer.
     TMM_DefineWord(l_Opcode);
 
+    // In the case of the JPB instruction, the right expression syntax must be an identifier.
+    if (p_SyntaxNode->m_RightExpr->m_Type != TMM_ST_IDENTIFIER)
+    {
+        TM_error("The 'JPB' instruction requires an identifier as the right expression.");
+        return false;
+    }
+
     // Evaluate the right expression. It should be a number.
     TMM_Value* l_RightValue = TMM_Evaluate(p_SyntaxNode->m_RightExpr);
     if (l_RightValue == NULL)
@@ -1366,8 +1378,10 @@ static bool TMM_EvaluateInstructionJPB (const TMM_Syntax* p_SyntaxNode)
     uint16_t l_RightOperand = (l_RightValue->m_IntegerPart & 0xFFFF);
     TMM_DestroyValue(l_RightValue);
 
-    // Write the operand to the output buffer.
-    return TMM_DefineWord(l_RightOperand);
+    // In the case of the JPB instruction, we are jumping by a relative offset. Take the right operand
+    // and subtract the current ROM cursor from that point. Store the result in a signed 16-bit integer.
+    int16_t l_Offset = l_RightOperand - s_Builder.m_ROMCursor;
+    return TMM_DefineWord((uint16_t) l_Offset - 2);
 }
 
 static bool TMM_EvaluateInstructionCALL (const TMM_Syntax* p_SyntaxNode)
@@ -1613,7 +1627,7 @@ static bool TMM_EvaluateInstructionADD (const TMM_Syntax* p_SyntaxNode)
     TMM_DestroyValue(l_RightValue);
 
     // Write the operand to the output buffer.
-    return TMM_DefineLong(l_RightOperand);
+    return TMM_DefineIntegerByRegisterType(l_RegisterType, l_RightOperand);
 }
 
 static bool TMM_EvaluateInstructionADC (const TMM_Syntax* p_SyntaxNode)
@@ -1692,7 +1706,7 @@ static bool TMM_EvaluateInstructionADC (const TMM_Syntax* p_SyntaxNode)
     TMM_DestroyValue(l_RightValue);
 
     // Write the operand to the output buffer.
-    return TMM_DefineLong(l_RightOperand);
+    return TMM_DefineIntegerByRegisterType(l_RegisterType, l_RightOperand);
 }
 
 static bool TMM_EvaluateInstructionSUB (const TMM_Syntax* p_SyntaxNode)
@@ -1771,7 +1785,7 @@ static bool TMM_EvaluateInstructionSUB (const TMM_Syntax* p_SyntaxNode)
     TMM_DestroyValue(l_RightValue);
 
     // Write the operand to the output buffer.
-    return TMM_DefineLong(l_RightOperand);
+    return TMM_DefineIntegerByRegisterType(l_RegisterType, l_RightOperand);
 }
 
 static bool TMM_EvaluateInstructionSBC (const TMM_Syntax* p_SyntaxNode)
@@ -1850,7 +1864,7 @@ static bool TMM_EvaluateInstructionSBC (const TMM_Syntax* p_SyntaxNode)
     TMM_DestroyValue(l_RightValue);
 
     // Write the operand to the output buffer.
-    return TMM_DefineLong(l_RightOperand);
+    return TMM_DefineIntegerByRegisterType(l_RegisterType, l_RightOperand);
 }
 
 static bool TMM_EvaluateInstructionAND (const TMM_Syntax* p_SyntaxNode)
@@ -1929,7 +1943,7 @@ static bool TMM_EvaluateInstructionAND (const TMM_Syntax* p_SyntaxNode)
     TMM_DestroyValue(l_RightValue);
 
     // Write the operand to the output buffer.
-    return TMM_DefineLong(l_RightOperand);
+    return TMM_DefineIntegerByRegisterType(l_RegisterType, l_RightOperand);
 }
 
 static bool TMM_EvaluateInstructionOR (const TMM_Syntax* p_SyntaxNode)
@@ -2008,7 +2022,7 @@ static bool TMM_EvaluateInstructionOR (const TMM_Syntax* p_SyntaxNode)
     TMM_DestroyValue(l_RightValue);
 
     // Write the operand to the output buffer.
-    return TMM_DefineLong(l_RightOperand);
+    return TMM_DefineIntegerByRegisterType(l_RegisterType, l_RightOperand);
 }
 
 static bool TMM_EvaluateInstructionXOR (const TMM_Syntax* p_SyntaxNode)
@@ -2087,7 +2101,7 @@ static bool TMM_EvaluateInstructionXOR (const TMM_Syntax* p_SyntaxNode)
     TMM_DestroyValue(l_RightValue);
 
     // Write the operand to the output buffer.
-    return TMM_DefineLong(l_RightOperand);
+    return TMM_DefineIntegerByRegisterType(l_RegisterType, l_RightOperand);
 }
 
 static bool TMM_EvaluateInstructionNOT (const TMM_Syntax* p_SyntaxNode)
@@ -2201,7 +2215,7 @@ static bool TMM_EvaluateInstructionCMP (const TMM_Syntax* p_SyntaxNode)
     TMM_DestroyValue(l_RightValue);
 
     // Write the operand to the output buffer.
-    return TMM_DefineLong(l_RightOperand);
+    return TMM_DefineIntegerByRegisterType(l_RegisterType, l_RightOperand);
 }
 
 static bool TMM_EvaluateInstructionSLA (const TMM_Syntax* p_SyntaxNode)
@@ -2836,6 +2850,7 @@ static TMM_Value* TMM_EvaluateLabel (const TMM_Syntax* p_SyntaxNode)
         size_t  l_LabelStrlen = strlen(p_SyntaxNode->m_String);
         char* l_LabelName = TM_calloc(l_LabelStrlen + 1, char);
         TM_pexpect(l_LabelName != NULL, "Failed to allocate memory for label name string");
+        strncpy(l_LabelName, p_SyntaxNode->m_String, l_LabelStrlen);
 
         // Allocate memory for the label's references array.
         uint32_t* l_LabelReferences = TM_calloc(TMM_BUILDER_INITIAL_CAPACITY, uint32_t);
@@ -3641,6 +3656,28 @@ TMM_Value* TMM_EvaluateOrg (const TMM_Syntax* p_SyntaxNode)
     if (p_SyntaxNode->m_KeywordType == TMM_KT_ROM)
     {
         s_Builder.m_CursorInRAM = false;
+
+        // Evaluate the offset expression, if one is provided.
+        if (p_SyntaxNode->m_LeftExpr != NULL)
+        {
+            TMM_Value* l_OffsetValue = TMM_Evaluate(p_SyntaxNode->m_LeftExpr);
+            if (l_OffsetValue == NULL)
+            {
+                return NULL;
+            }
+
+            // Check the type of the value. It must be a number.
+            if (l_OffsetValue->m_Type != TMM_VT_NUMBER)
+            {
+                TM_error("Unexpected value type for offset expression in 'org rom' statement.");
+                TMM_DestroyValue(l_OffsetValue);
+                return NULL;
+            }
+
+            // Set the ROM cursor to the offset value.
+            s_Builder.m_ROMCursor = (size_t) l_OffsetValue->m_IntegerPart;
+            TMM_DestroyValue(l_OffsetValue);
+        }
     }
     else if (p_SyntaxNode->m_KeywordType == TMM_KT_RAM)
     {
@@ -3891,10 +3928,17 @@ TMM_Value* TMM_Evaluate (const TMM_Syntax* p_SyntaxNode)
 void TMM_InitBuilder ()
 {
     // Initialize the output buffer.
-    s_Builder.m_Output = TM_malloc(TMM_BUILDER_INITIAL_CAPACITY, uint8_t);
+    s_Builder.m_Output = TM_calloc(TMM_BUILDER_OUTPUT_CAPACITY, uint8_t);
     TM_pexpect(s_Builder.m_Output != NULL, "Failed to allocate memory for the builder's output buffer");
-    s_Builder.m_OutputSize = 0;
-    s_Builder.m_OutputCapacity = TMM_BUILDER_INITIAL_CAPACITY;
+    s_Builder.m_OutputSize = TMM_BUILDER_OUTPUT_CAPACITY;
+    s_Builder.m_OutputCapacity = TMM_BUILDER_OUTPUT_CAPACITY;
+
+    // Initialize the area of the output buffer beyond the metadata section to 0xFF.
+    memset(
+        s_Builder.m_Output + 0x1000,
+        0xFF,
+        s_Builder.m_OutputSize - 0x1000
+    );
 
     // Initialize labels.
     s_Builder.m_Labels = TM_malloc(TMM_BUILDER_INITIAL_CAPACITY, TMM_Label);
